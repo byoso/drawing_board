@@ -112,6 +112,8 @@
             @pointerup="onPointerUp"
             @pointerleave="onPointerUp"
             @dblclick="onCanvasDoubleClick"
+            @dragover.prevent
+            @drop.prevent="onCanvasDrop"
           ></canvas>
         </div>
       </main>
@@ -147,6 +149,49 @@
             </div>
           </article>
         </div>
+
+        <div class="icon-sets-header">
+          <p class="panel-title">Icon sets</p>
+          <div class="icon-set-actions">
+            <button class="button is-small ghost-btn" @click="createIconSet">New set</button>
+            <button class="button is-small ghost-btn" @click="openImportIconSetPicker">Import JSON</button>
+          </div>
+        </div>
+
+        <div class="icon-set-list">
+          <article
+            v-for="iconSet in iconSets"
+            :key="iconSet.id"
+            class="icon-set-item"
+          >
+            <div class="icon-set-row">
+              <strong>{{ iconSet.name }}</strong>
+              <span>{{ iconSet.icons.length }} icons</span>
+            </div>
+            <div class="icon-set-actions">
+              <button class="button is-small ghost-btn" @click="addIconUrl(iconSet.id)">Add URL icon</button>
+              <button class="button is-small ghost-btn" @click="openIconUploadPicker(iconSet.id)">Upload icon</button>
+              <button class="button is-small ghost-btn" @click="exportIconSet(iconSet.id)">Export JSON</button>
+              <button class="button is-small danger-btn" @click="deleteIconSet(iconSet.id)">Delete set</button>
+            </div>
+
+            <div class="icon-list" v-if="iconSet.icons.length">
+              <div
+                v-for="icon in iconSet.icons"
+                :key="icon.id"
+                class="icon-thumb"
+                draggable="true"
+                @dragstart="onIconDragStart(iconSet.id, icon.id, $event)"
+              >
+                <img :src="icon.src" :alt="icon.name" />
+                <div class="icon-thumb-meta">
+                  <span>{{ icon.name }}</span>
+                  <button class="button is-small danger-btn mini-btn" @click.stop="deleteIcon(iconSet.id, icon.id)">Delete</button>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
       </aside>
     </div>
 
@@ -156,6 +201,22 @@
       class="is-hidden"
       accept="application/json,.json"
       @change="onImportFileChange"
+    >
+
+    <input
+      ref="iconUploadInput"
+      type="file"
+      class="is-hidden"
+      accept="image/*,.svg"
+      @change="onIconUploadFileChange"
+    >
+
+    <input
+      ref="iconSetImportInput"
+      type="file"
+      class="is-hidden"
+      accept="application/json,.json"
+      @change="onIconSetImportFileChange"
     >
 
     <div v-if="toast.message" class="toast" :class="toast.type">
@@ -239,7 +300,8 @@
         store: {
           version: SCHEMA_VERSION,
           activeSchemaId: null,
-          schemas: []
+          schemas: [],
+          iconSets: []
         },
         activeSchemaId: null,
         selectedElementIds: [],
@@ -247,6 +309,8 @@
         marqueeRect: null,
         viewOffsetX: 0,
         viewOffsetY: 0,
+        iconSets: [],
+        pendingIconSetId: null,
         pointerState: {
           mode: null,
           pointerId: null,
@@ -262,6 +326,7 @@
         isDirty: false,
         historyBySchema: {},
         maxHistoryDepth: 80,
+        iconImageCache: {},
         renamingSchemaId: null,
         renameDraft: '',
         toast: {
@@ -292,6 +357,241 @@
       getDashArrayFromStyle(style) {
         return style === 'dashed' ? [10, 7] : []
       },
+      normalizeIconSet(iconSet) {
+        return {
+          id: iconSet.id || uid('iconset'),
+          name: iconSet.name || 'Untitled set',
+          icons: Array.isArray(iconSet.icons)
+            ? iconSet.icons.map((icon) => ({
+                id: icon.id || uid('icon'),
+                name: icon.name || 'Icon',
+                src: icon.src || '',
+                width: typeof icon.width === 'number' ? icon.width : 128,
+                height: typeof icon.height === 'number' ? icon.height : 128
+              })).filter((icon) => icon.src)
+            : []
+        }
+      },
+      fitSizeWithinLimit(width, height, limit = 128) {
+        const safeWidth = Math.max(1, width || limit)
+        const safeHeight = Math.max(1, height || limit)
+        const ratio = Math.min(limit / safeWidth, limit / safeHeight, 1)
+        return {
+          width: Math.max(1, Math.round(safeWidth * ratio)),
+          height: Math.max(1, Math.round(safeHeight * ratio))
+        }
+      },
+      loadImageDimensions(src) {
+        return new Promise((resolve) => {
+          const image = new Image()
+          image.onload = () => {
+            resolve({ width: image.naturalWidth || 128, height: image.naturalHeight || 128 })
+          }
+          image.onerror = () => resolve({ width: 128, height: 128 })
+          image.src = src
+        })
+      },
+      getCachedIconImage(src) {
+        if (!src) {
+          return null
+        }
+        if (!this.iconImageCache[src]) {
+          const image = new Image()
+          image.onload = () => {
+            this.renderCanvas()
+          }
+          image.onerror = () => {
+            this.renderCanvas()
+          }
+          image.src = src
+          this.iconImageCache[src] = image
+        }
+        return this.iconImageCache[src]
+      },
+      createIconSet() {
+        const name = prompt('Icon set name:')
+        if (!name || !name.trim()) {
+          return
+        }
+        this.iconSets.push(this.normalizeIconSet({ name: name.trim(), icons: [] }))
+        this.persistStore()
+      },
+      deleteIconSet(iconSetId) {
+        const iconSet = this.iconSets.find((item) => item.id === iconSetId)
+        if (!iconSet) {
+          return
+        }
+        if (!confirm(`Delete icon set "${iconSet.name}"?`)) {
+          return
+        }
+        this.iconSets = this.iconSets.filter((item) => item.id !== iconSetId)
+        this.persistStore()
+      },
+      openIconUploadPicker(iconSetId) {
+        this.pendingIconSetId = iconSetId
+        this.$refs.iconUploadInput.value = ''
+        this.$refs.iconUploadInput.click()
+      },
+      openImportIconSetPicker() {
+        this.$refs.iconSetImportInput.value = ''
+        this.$refs.iconSetImportInput.click()
+      },
+      async addIconUrl(iconSetId) {
+        const src = prompt('Icon URL:')
+        if (!src || !src.trim()) {
+          return
+        }
+        const name = prompt('Icon name:', 'Icon') || 'Icon'
+        await this.addIconToSet(iconSetId, {
+          name: name.trim() || 'Icon',
+          src: src.trim()
+        })
+      },
+      async addIconToSet(iconSetId, iconData) {
+        const iconSet = this.iconSets.find((item) => item.id === iconSetId)
+        if (!iconSet || !iconData || !iconData.src) {
+          return
+        }
+        const dimensions = iconData.width && iconData.height
+          ? { width: iconData.width, height: iconData.height }
+          : await this.loadImageDimensions(iconData.src)
+        iconSet.icons.push({
+          id: uid('icon'),
+          name: iconData.name || 'Icon',
+          src: iconData.src,
+          width: dimensions.width,
+          height: dimensions.height
+        })
+        this.persistStore()
+      },
+      deleteIcon(iconSetId, iconId) {
+        const iconSet = this.iconSets.find((item) => item.id === iconSetId)
+        if (!iconSet) {
+          return
+        }
+        iconSet.icons = iconSet.icons.filter((icon) => icon.id !== iconId)
+        this.persistStore()
+      },
+      exportIconSet(iconSetId) {
+        const iconSet = this.iconSets.find((item) => item.id === iconSetId)
+        if (!iconSet) {
+          return
+        }
+        const payload = {
+          iconSetVersion: 1,
+          exportedAt: Date.now(),
+          name: iconSet.name,
+          icons: iconSet.icons
+        }
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        const safeName = iconSet.name.replace(/[^a-z0-9-_]/gi, '_').toLowerCase()
+        anchor.href = url
+        anchor.download = `${safeName || 'icon-set'}.json`
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        URL.revokeObjectURL(url)
+      },
+      async onIconUploadFileChange(event) {
+        const file = event.target.files && event.target.files[0]
+        const iconSetId = this.pendingIconSetId
+        this.pendingIconSetId = null
+        if (!file || !iconSetId) {
+          return
+        }
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result || ''))
+          reader.onerror = () => reject(new Error('Unable to read file'))
+          reader.readAsDataURL(file)
+        }).catch(() => '')
+        if (!dataUrl) {
+          this.showToast('Could not read icon file.', 'error')
+          return
+        }
+        await this.addIconToSet(iconSetId, {
+          name: file.name.replace(/\.[^.]+$/, '') || 'Icon',
+          src: dataUrl
+        })
+      },
+      async onIconSetImportFileChange(event) {
+        const file = event.target.files && event.target.files[0]
+        if (!file) {
+          return
+        }
+        try {
+          const content = await file.text()
+          const payload = JSON.parse(content)
+          if (!payload || !Array.isArray(payload.icons)) {
+            this.showToast('Invalid icon set JSON.', 'error')
+            return
+          }
+          const iconSet = this.normalizeIconSet({
+            name: payload.name || `Icon set ${this.iconSets.length + 1}`,
+            icons: payload.icons
+          })
+          this.iconSets.push(iconSet)
+          this.persistStore()
+        } catch (error) {
+          this.showToast('Icon set import failed.', 'error')
+        }
+      },
+      onIconDragStart(iconSetId, iconId, event) {
+        const iconSet = this.iconSets.find((item) => item.id === iconSetId)
+        const icon = iconSet && iconSet.icons.find((item) => item.id === iconId)
+        if (!icon) {
+          return
+        }
+        event.dataTransfer.effectAllowed = 'copy'
+        const payload = JSON.stringify({
+          kind: 'icon',
+          iconSetId,
+          iconId
+        })
+        event.dataTransfer.setData('application/json', payload)
+        event.dataTransfer.setData('text/plain', payload)
+      },
+      async onCanvasDrop(event) {
+        const raw = event.dataTransfer && event.dataTransfer.getData('application/json')
+        if (!raw) {
+          return
+        }
+        let payload = null
+        try {
+          payload = JSON.parse(raw)
+        } catch (error) {
+          return
+        }
+        if (!payload || payload.kind !== 'icon') {
+          return
+        }
+        const iconSet = this.iconSets.find((item) => item.id === payload.iconSetId)
+        const icon = iconSet && iconSet.icons.find((item) => item.id === payload.iconId)
+        if (!icon) {
+          return
+        }
+        const pos = this.getPointerPosition(event)
+        const fit = this.fitSizeWithinLimit(icon.width, icon.height, 128)
+        const element = {
+          id: uid('el'),
+          type: 'icon',
+          x: pos.x - fit.width / 2,
+          y: pos.y - fit.height / 2,
+          w: fit.width,
+          h: fit.height,
+          src: icon.src,
+          name: icon.name,
+          strokeWidth: this.getCurrentStrokeWidth(),
+          strokeStyle: this.lineStyle
+        }
+        this.pushHistoryCheckpoint()
+        this.activeSchema.elements.push(element)
+        this.setSingleSelection(element.id)
+        this.markDirty()
+        this.renderCanvas()
+      },
       isElementSelected(elementId) {
         return this.selectedElementIds.includes(elementId)
       },
@@ -305,7 +605,7 @@
         if (!element) {
           return null
         }
-        if (element.type === 'rect' || element.type === 'ellipse') {
+        if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon') {
           const r = normalizeRect(element)
           return { x: r.x, y: r.y, w: r.w, h: r.h }
         }
@@ -356,8 +656,10 @@
                   createdAt: typeof schema.createdAt === 'number' ? schema.createdAt : Date.now(),
                   updatedAt: typeof schema.updatedAt === 'number' ? schema.updatedAt : Date.now(),
                   elements: Array.isArray(schema.elements) ? schema.elements : []
-                }))
+                })),
+                iconSets: Array.isArray(parsed.iconSets) ? parsed.iconSets : []
               }
+              this.iconSets = this.store.iconSets
             }
           } catch (error) {
             this.showToast('Invalid local store detected, resetting it.', 'error')
@@ -387,6 +689,7 @@
       },
       persistStore() {
         this.store.activeSchemaId = this.activeSchemaId
+        this.store.iconSets = this.iconSets
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.store))
       },
       ensureSchemaHistory(schemaId) {
@@ -958,7 +1261,7 @@
           if (!target || !this.pointerState.startElement || !this.pointerState.resizeHandle) {
             return
           }
-          if (target.type !== 'rect' && target.type !== 'ellipse' && target.type !== 'arrow') {
+          if (target.type !== 'rect' && target.type !== 'ellipse' && target.type !== 'arrow' && target.type !== 'icon') {
             return
           }
           if (!this.pointerState.historyCaptured) {
@@ -1044,7 +1347,7 @@
             { key: 'end', x: element.x2, y: element.y2, cursor: 'move' }
           ]
         }
-        if (element.type !== 'rect' && element.type !== 'ellipse') {
+        if (element.type !== 'rect' && element.type !== 'ellipse' && element.type !== 'icon') {
           return []
         }
         const r = normalizeRect(element)
@@ -1068,7 +1371,7 @@
           return null
         }
         const element = this.activeSchema.elements.find((item) => item.id === this.selectedElementIds[0])
-        if (!element || (element.type !== 'rect' && element.type !== 'ellipse' && element.type !== 'arrow')) {
+        if (!element || (element.type !== 'rect' && element.type !== 'ellipse' && element.type !== 'arrow' && element.type !== 'icon')) {
           return null
         }
         const handles = this.getResizeHandles(element)
@@ -1138,6 +1441,12 @@
               return element
             }
           }
+          if (element.type === 'icon') {
+            const r = normalizeRect(element)
+            if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+              return element
+            }
+          }
           if (element.type === 'ellipse') {
             const r = normalizeRect(element)
             const rx = r.w / 2
@@ -1182,6 +1491,25 @@
           const r = normalizeRect(element)
           ctx.fillRect(r.x, r.y, r.w, r.h)
           ctx.strokeRect(r.x, r.y, r.w, r.h)
+          if (selected) {
+            this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
+          }
+        }
+
+        if (element.type === 'icon') {
+          const r = normalizeRect(element)
+          const image = this.getCachedIconImage(element.src)
+          if (image && image.complete && image.naturalWidth > 0) {
+            ctx.drawImage(image, r.x, r.y, r.w, r.h)
+          } else {
+            ctx.fillStyle = '#eef3fb'
+            ctx.fillRect(r.x, r.y, r.w, r.h)
+            ctx.strokeStyle = '#c6d4eb'
+            ctx.strokeRect(r.x, r.y, r.w, r.h)
+            ctx.fillStyle = '#6b7ea6'
+            ctx.font = '12px Space Grotesk'
+            ctx.fillText('Loading icon...', r.x + 8, r.y + 20)
+          }
           if (selected) {
             this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
           }
@@ -1308,7 +1636,7 @@
         if (this.activeSchema) {
           this.activeSchema.elements.forEach((element) => {
             this.drawElement(ctx, element, this.isElementSelected(element.id))
-            if (this.selectedElementIds.length === 1 && this.isElementSelected(element.id) && (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')) {
+            if (this.selectedElementIds.length === 1 && this.isElementSelected(element.id) && (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'icon')) {
               this.drawResizeHandles(ctx, element)
             }
           })
@@ -1711,6 +2039,91 @@ body {
   margin-top: 6px;
   display: flex;
   gap: 6px;
+}
+
+.icon-sets-header {
+  margin-top: 14px;
+}
+
+.icon-set-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.icon-set-item {
+  border: 1px solid #d9e2f2;
+  border-radius: 10px;
+  background: #fafdff;
+  padding: 10px;
+}
+
+.icon-set-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.icon-set-row strong {
+  font-size: 0.9rem;
+}
+
+.icon-set-row span {
+  color: #7182a0;
+  font-size: 0.75rem;
+}
+
+.icon-set-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.icon-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.icon-thumb {
+  border: 1px solid #d6dfef;
+  border-radius: 10px;
+  background: white;
+  padding: 8px;
+  cursor: grab;
+}
+
+.icon-thumb img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.icon-thumb-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-thumb-meta span {
+  font-size: 0.75rem;
+  color: #3b4b6a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-btn {
+  padding: 0.2rem 0.45rem;
+  height: auto;
+  font-size: 0.72rem;
 }
 
 .save-btn,
