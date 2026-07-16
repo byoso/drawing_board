@@ -304,6 +304,8 @@
   const STORAGE_KEY = 'drawing_board_store_v1'
   const SCHEMA_VERSION = 1
   const RECT_CORNER_RADIUS = 8
+  const WORLD_WIDTH = 10000
+  const WORLD_HEIGHT = 10000
 
   function uid(prefix = 'id') {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
@@ -421,6 +423,7 @@
         renameDraft: '',
         isDiagramsCollapsed: false,
         isIconSetsCollapsed: false,
+        isSpacePressed: false,
         toast: {
           message: '',
           type: 'info'
@@ -448,6 +451,82 @@
       },
       getCurrentFontSize() {
         return (this.sizePresets[this.drawSize] || this.sizePresets.small).fontSize
+      },
+      getBrowserCapabilities() {
+        return {
+          clipboardWriteImage: Boolean(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write),
+          secureContext: Boolean(window.isSecureContext),
+          pointerCapture: Boolean(this.$refs.canvas && typeof this.$refs.canvas.setPointerCapture === 'function'),
+          cssColorMix: Boolean(window.CSS && typeof window.CSS.supports === 'function' && window.CSS.supports('background', 'color-mix(in srgb, red, blue)'))
+        }
+      },
+      triggerBlobDownload(blob, fallbackName = 'diagram.png') {
+        if (!blob) {
+          return
+        }
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        const schemaName = this.activeSchema && this.activeSchema.name
+          ? this.activeSchema.name.replace(/[^a-z0-9-_]/gi, '_').toLowerCase()
+          : ''
+        anchor.href = url
+        anchor.download = schemaName ? `${schemaName}.png` : fallbackName
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        URL.revokeObjectURL(url)
+      },
+      clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value))
+      },
+      clampPointToWorld(point) {
+        return {
+          x: this.clamp(point.x, 0, WORLD_WIDTH),
+          y: this.clamp(point.y, 0, WORLD_HEIGHT)
+        }
+      },
+      clampElementToWorld(element) {
+        if (!element) {
+          return
+        }
+        if (element.type === 'arrow') {
+          element.x1 = this.clamp(element.x1, 0, WORLD_WIDTH)
+          element.y1 = this.clamp(element.y1, 0, WORLD_HEIGHT)
+          element.x2 = this.clamp(element.x2, 0, WORLD_WIDTH)
+          element.y2 = this.clamp(element.y2, 0, WORLD_HEIGHT)
+          return
+        }
+        if (element.type === 'text') {
+          element.x = this.clamp(element.x, 0, WORLD_WIDTH)
+          element.y = this.clamp(element.y, 0, WORLD_HEIGHT)
+          return
+        }
+        if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon') {
+          const width = Math.abs(element.w || 0)
+          const height = Math.abs(element.h || 0)
+          const maxX = Math.max(0, WORLD_WIDTH - width)
+          const maxY = Math.max(0, WORLD_HEIGHT - height)
+          element.x = this.clamp(element.x, 0, maxX)
+          element.y = this.clamp(element.y, 0, maxY)
+        }
+      },
+      clampViewOffset(nextX, nextY, zoom = this.zoomScale) {
+        const canvas = this.$refs.canvas
+        if (!canvas) {
+          return {
+            x: Math.max(0, nextX),
+            y: Math.max(0, nextY)
+          }
+        }
+        const rect = canvas.getBoundingClientRect()
+        const viewportWorldWidth = rect.width / zoom
+        const viewportWorldHeight = rect.height / zoom
+        const maxOffsetX = Math.max(0, WORLD_WIDTH - viewportWorldWidth)
+        const maxOffsetY = Math.max(0, WORLD_HEIGHT - viewportWorldHeight)
+        return {
+          x: this.clamp(nextX, 0, maxOffsetX),
+          y: this.clamp(nextY, 0, maxOffsetY)
+        }
       },
       getDashArrayFromStyle(style) {
         return style === 'dashed' ? [10, 7] : []
@@ -493,6 +572,9 @@
         }
         if (!this.iconImageCache[src]) {
           const image = new Image()
+          if (!src.startsWith('data:')) {
+            image.crossOrigin = 'anonymous'
+          }
           image.onload = () => {
             this.renderCanvas()
           }
@@ -516,8 +598,11 @@
             image.src = src
           })
         }
-        return fetch(src, { mode: 'cors', credentials: 'omit' })
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000)
+        return fetch(src, { mode: 'cors', credentials: 'omit', signal: controller.signal })
           .then((response) => {
+            clearTimeout(timeoutId)
             if (!response.ok) {
               throw new Error('Unable to fetch icon for export')
             }
@@ -536,7 +621,10 @@
             }
             image.src = objectUrl
           }))
-          .catch(() => null)
+          .catch(() => {
+            clearTimeout(timeoutId)
+            return null
+          })
       },
       async drawElementForExport(ctx, element) {
         if (element.type !== 'icon') {
@@ -731,11 +819,16 @@
           iconSetId,
           iconId
         })
-        event.dataTransfer.setData('application/json', payload)
+        try {
+          event.dataTransfer.setData('application/json', payload)
+        } catch (error) {
+          // Firefox and some contexts can reject custom MIME types.
+        }
         event.dataTransfer.setData('text/plain', payload)
       },
       async onCanvasDrop(event) {
-        const raw = event.dataTransfer && event.dataTransfer.getData('application/json')
+        const raw = (event.dataTransfer && event.dataTransfer.getData('application/json'))
+          || (event.dataTransfer && event.dataTransfer.getData('text/plain'))
         if (!raw) {
           return
         }
@@ -767,6 +860,7 @@
           strokeWidth: this.getCurrentStrokeWidth(),
           strokeStyle: this.lineStyle
         }
+        this.clampElementToWorld(element)
         this.pushHistoryCheckpoint()
         this.activeSchema.elements.push(element)
         this.setSingleSelection(element.id)
@@ -1219,7 +1313,7 @@
 
         const exportWidth = Math.ceil(bounds.w + (margin * 2))
         const exportHeight = Math.ceil(bounds.h + (margin * 2))
-        const dpr = window.devicePixelRatio || 1
+        const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3))
 
         const outCanvas = document.createElement('canvas')
         outCanvas.width = Math.max(1, Math.floor(exportWidth * dpr))
@@ -1246,6 +1340,11 @@
           }
         })
 
+        if (!blob) {
+          this.showToast('PNG export failed due to browser security restrictions (likely CORS).', 'error')
+          return null
+        }
+
         if (blob && usedFallbackForRemoteIcons) {
           this.showToast('Some remote icons could not be embedded and were replaced in the export.', 'error')
         }
@@ -1269,19 +1368,22 @@
         this.showToast('PNG downloaded.')
       },
       async copySchemaPngToClipboard() {
-        if (!navigator.clipboard || !window.ClipboardItem) {
-          this.showToast('Clipboard image API is not available in this browser.', 'error')
-          return
-        }
         const blob = await this.buildCroppedSchemaPngBlob()
         if (!blob) {
+          return
+        }
+        const capabilities = this.getBrowserCapabilities()
+        if (!capabilities.clipboardWriteImage || !capabilities.secureContext) {
+          this.triggerBlobDownload(blob)
+          this.showToast('Clipboard image API unavailable here. PNG downloaded instead.', 'error')
           return
         }
         try {
           await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
           this.showToast('PNG copied to clipboard.')
         } catch (error) {
-          this.showToast('Clipboard copy failed (permission may be denied).', 'error')
+          this.triggerBlobDownload(blob)
+          this.showToast('Clipboard copy failed. PNG downloaded instead.', 'error')
         }
       },
       getCanvasPosition(event) {
@@ -1294,10 +1396,10 @@
       },
       getPointerPosition(event) {
         const p = this.getCanvasPosition(event)
-        return {
+        return this.clampPointToWorld({
           x: (p.x / this.zoomScale) + this.viewOffsetX,
           y: (p.y / this.zoomScale) + this.viewOffsetY
-        }
+        })
       },
       onCanvasWheel(event) {
         if (!this.isPointerInCanvas) {
@@ -1315,8 +1417,13 @@
         const worldXBefore = (canvasPos.x / oldZoom) + this.viewOffsetX
         const worldYBefore = (canvasPos.y / oldZoom) + this.viewOffsetY
         this.zoomScale = nextZoom
-        this.viewOffsetX = worldXBefore - (canvasPos.x / nextZoom)
-        this.viewOffsetY = worldYBefore - (canvasPos.y / nextZoom)
+        const clampedView = this.clampViewOffset(
+          worldXBefore - (canvasPos.x / nextZoom),
+          worldYBefore - (canvasPos.y / nextZoom),
+          nextZoom
+        )
+        this.viewOffsetX = clampedView.x
+        this.viewOffsetY = clampedView.y
         this.updateCanvasPointerPosition(event)
         this.renderCanvas()
       },
@@ -1357,8 +1464,13 @@
         const targetCenterX = target.x + (target.w / 2)
         const targetCenterY = target.y + (target.h / 2)
 
-        this.viewOffsetX = Math.max(0, targetCenterX - (viewportWidth / 2))
-        this.viewOffsetY = Math.max(0, targetCenterY - (viewportHeight / 2))
+        const clampedView = this.clampViewOffset(
+          targetCenterX - (viewportWidth / 2),
+          targetCenterY - (viewportHeight / 2),
+          this.zoomScale
+        )
+        this.viewOffsetX = clampedView.x
+        this.viewOffsetY = clampedView.y
         this.renderCanvas()
       },
       updateCanvasPointerPosition(event) {
@@ -1422,7 +1534,17 @@
         this.renderCanvas()
       },
       onPointerDown(event) {
-        if (event.button === 1) {
+        const canvas = this.$refs.canvas
+        if (canvas && typeof canvas.setPointerCapture === 'function') {
+          try {
+            canvas.setPointerCapture(event.pointerId)
+          } catch (error) {
+            // Ignore if pointer capture is not available for this interaction.
+          }
+        }
+
+        const isPanPointerDown = event.button === 1 || (event.button === 0 && this.isSpacePressed)
+        if (isPanPointerDown) {
           event.preventDefault()
           const canvasPos = this.getCanvasPosition(event)
           this.pointerState.pointerId = event.pointerId
@@ -1438,7 +1560,6 @@
           return
         }
 
-        const canvas = this.$refs.canvas
         if (canvas && typeof canvas.focus === 'function') {
           canvas.focus({ preventScroll: true })
         }
@@ -1548,7 +1669,7 @@
         }
       },
       onPointerMove(event) {
-        if (!this.pointerState.pointerId || event.pointerId !== this.pointerState.pointerId) {
+        if (this.pointerState.pointerId == null || event.pointerId !== this.pointerState.pointerId) {
           return
         }
 
@@ -1557,8 +1678,12 @@
           const canvasPos = this.getCanvasPosition(event)
           const dx = canvasPos.x - this.pointerState.startX
           const dy = canvasPos.y - this.pointerState.startY
-          this.viewOffsetX = Math.max(0, this.pointerState.startViewOffsetX - (dx / this.zoomScale))
-          this.viewOffsetY = Math.max(0, this.pointerState.startViewOffsetY - (dy / this.zoomScale))
+          const clampedView = this.clampViewOffset(
+            this.pointerState.startViewOffsetX - (dx / this.zoomScale),
+            this.pointerState.startViewOffsetY - (dy / this.zoomScale)
+          )
+          this.viewOffsetX = clampedView.x
+          this.viewOffsetY = clampedView.y
           this.renderCanvas()
           return
         }
@@ -1593,6 +1718,7 @@
               target.x = startElement.x + dx
               target.y = startElement.y + dy
             }
+            this.clampElementToWorld(target)
           })
           this.markDirty()
           this.renderCanvas()
@@ -1612,6 +1738,7 @@
             this.pointerState.historyCaptured = true
           }
           this.applyResize(target, this.pointerState.startElement, this.pointerState.resizeHandle, pos.x, pos.y)
+          this.clampElementToWorld(target)
           this.markDirty()
           this.renderCanvas()
           return
@@ -1643,8 +1770,17 @@
         }
       },
       onPointerUp(event) {
-        if (this.pointerState.pointerId && event.pointerId !== this.pointerState.pointerId) {
+        if (this.pointerState.pointerId != null && event.pointerId !== this.pointerState.pointerId) {
           return
+        }
+
+        const canvas = this.$refs.canvas
+        if (canvas && typeof canvas.releasePointerCapture === 'function') {
+          try {
+            canvas.releasePointerCapture(event.pointerId)
+          } catch (error) {
+            // Ignore when pointer capture was not acquired.
+          }
         }
 
         if (this.pointerState.mode === 'pan') {
@@ -1663,6 +1799,7 @@
             shouldAdd = rect.w > 6 && rect.h > 6
           }
           if (shouldAdd) {
+            this.clampElementToWorld(element)
             this.pushHistoryCheckpoint()
             this.activeSchema.elements.push(element)
             this.setSingleSelection(element.id)
@@ -1952,27 +2089,48 @@
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, width, height)
 
-        ctx.fillStyle = '#f8fbff'
+        ctx.fillStyle = '#fde8ef'
         ctx.fillRect(0, 0, width, height)
-        ctx.strokeStyle = '#e9eef8'
-        ctx.lineWidth = 1
 
-        const grid = 20
-        const scaledGrid = grid * this.zoomScale
-        const startX = -((((this.viewOffsetX * this.zoomScale) % scaledGrid) + scaledGrid) % scaledGrid)
-        const startY = -((((this.viewOffsetY * this.zoomScale) % scaledGrid) + scaledGrid) % scaledGrid)
+        const worldScreenX = -this.viewOffsetX * this.zoomScale
+        const worldScreenY = -this.viewOffsetY * this.zoomScale
+        const worldScreenW = WORLD_WIDTH * this.zoomScale
+        const worldScreenH = WORLD_HEIGHT * this.zoomScale
+        const visibleWorldX = Math.max(0, worldScreenX)
+        const visibleWorldY = Math.max(0, worldScreenY)
+        const visibleWorldW = Math.min(width, worldScreenX + worldScreenW) - visibleWorldX
+        const visibleWorldH = Math.min(height, worldScreenY + worldScreenH) - visibleWorldY
 
-        for (let x = startX; x < width; x += scaledGrid) {
+        if (visibleWorldW > 0 && visibleWorldH > 0) {
+          ctx.fillStyle = '#f8fbff'
+          ctx.fillRect(visibleWorldX, visibleWorldY, visibleWorldW, visibleWorldH)
+
+          ctx.save()
           ctx.beginPath()
-          ctx.moveTo(x, 0)
-          ctx.lineTo(x, height)
-          ctx.stroke()
-        }
-        for (let y = startY; y < height; y += scaledGrid) {
-          ctx.beginPath()
-          ctx.moveTo(0, y)
-          ctx.lineTo(width, y)
-          ctx.stroke()
+          ctx.rect(visibleWorldX, visibleWorldY, visibleWorldW, visibleWorldH)
+          ctx.clip()
+
+          ctx.strokeStyle = '#e9eef8'
+          ctx.lineWidth = 1
+          const grid = 20
+          const scaledGrid = grid * this.zoomScale
+          const startX = -((((this.viewOffsetX * this.zoomScale) % scaledGrid) + scaledGrid) % scaledGrid)
+          const startY = -((((this.viewOffsetY * this.zoomScale) % scaledGrid) + scaledGrid) % scaledGrid)
+
+          for (let x = startX; x < width; x += scaledGrid) {
+            ctx.beginPath()
+            ctx.moveTo(x, 0)
+            ctx.lineTo(x, height)
+            ctx.stroke()
+          }
+          for (let y = startY; y < height; y += scaledGrid) {
+            ctx.beginPath()
+            ctx.moveTo(0, y)
+            ctx.lineTo(width, y)
+            ctx.stroke()
+          }
+
+          ctx.restore()
         }
 
         ctx.save()
@@ -2053,6 +2211,7 @@
               element.x += dx
               element.y += dy
             }
+            this.clampElementToWorld(element)
           })
         }
         this.pushHistoryCheckpoint()
@@ -2066,6 +2225,14 @@
         const target = event.target
         const targetTag = target && target.tagName ? target.tagName.toLowerCase() : ''
         const isEditable = targetTag === 'input' || targetTag === 'textarea' || (target && target.isContentEditable)
+
+        if (event.code === 'Space') {
+          this.isSpacePressed = true
+          if (!isEditable) {
+            event.preventDefault()
+          }
+        }
+
         if (isEditable) {
           return
         }
@@ -2120,6 +2287,14 @@
           this.activeTool = map[key]
         }
       },
+      onGlobalKeyUp(event) {
+        if (event.code === 'Space') {
+          this.isSpacePressed = false
+        }
+      },
+      onWindowBlur() {
+        this.isSpacePressed = false
+      },
       formatDate(timestamp) {
         return new Date(timestamp).toLocaleString('en-GB', {
           hour: '2-digit',
@@ -2146,10 +2321,14 @@
       })
       window.addEventListener('resize', this.renderCanvas)
       window.addEventListener('keydown', this.onGlobalKeyDown)
+      window.addEventListener('keyup', this.onGlobalKeyUp)
+      window.addEventListener('blur', this.onWindowBlur)
     },
     beforeUnmount() {
       window.removeEventListener('resize', this.renderCanvas)
       window.removeEventListener('keydown', this.onGlobalKeyDown)
+      window.removeEventListener('keyup', this.onGlobalKeyUp)
+      window.removeEventListener('blur', this.onWindowBlur)
     }
   }).mount('#app')
 </script>
@@ -2199,6 +2378,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  background: rgba(255, 255, 255, 0.95);
   background: color-mix(in srgb, var(--surface), white 15%);
   border: 1px solid #e2e9f8;
   border-radius: 0;
