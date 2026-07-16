@@ -1983,6 +1983,7 @@ html,
 body {
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -2000,13 +2001,13 @@ body {
   width: 100vw;
   max-width: none;
   margin: 0;
-  min-height: 100vh;
+  height: 100vh;
 }
 
 .board-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
   background: color-mix(in srgb, var(--surface), white 15%);
   border: 1px solid #e2e9f8;
   border-radius: 0;
@@ -2057,12 +2058,20 @@ body {
   padding: 14px;
   border-right: 1px solid var(--line);
   background: linear-gradient(180deg, #fcfdff, #f5f9ff);
+  min-height: 0;
+}
+
+.tool-panel {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .schema-panel {
   border-right: none;
   border-left: 1px solid var(--line);
   background: linear-gradient(180deg, #fffdfb, #fff7f1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .panel-title {
@@ -2336,8 +2345,8 @@ body {
 
 .icon-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
   margin-top: 10px;
 }
 
@@ -2345,7 +2354,7 @@ body {
   border: 1px solid #d6dfef;
   border-radius: 10px;
   background: white;
-  padding: 8px;
+  padding: 6px;
   cursor: grab;
 }
 
@@ -2354,7 +2363,7 @@ body {
   aspect-ratio: 1;
   object-fit: contain;
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .icon-thumb-meta {
@@ -2365,7 +2374,7 @@ body {
 }
 
 .icon-thumb-meta span {
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   color: #3b4b6a;
   overflow: hidden;
   text-overflow: ellipsis;
