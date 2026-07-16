@@ -67,6 +67,33 @@
             ></button>
           </div>
         </div>
+
+        <div class="draw-options" aria-label="Drawing options">
+          <p class="palette-title">Line style</p>
+          <div class="options-row">
+            <button
+              class="option-chip"
+              :class="{ active: lineStyle === 'solid' }"
+              @click="lineStyle = 'solid'"
+            >Solid</button>
+            <button
+              class="option-chip"
+              :class="{ active: lineStyle === 'dashed' }"
+              @click="lineStyle = 'dashed'"
+            >Dashed</button>
+          </div>
+
+          <p class="palette-title">Size</p>
+          <div class="options-row">
+            <button
+              v-for="size in ['small', 'medium', 'big']"
+              :key="size"
+              class="option-chip"
+              :class="{ active: drawSize === size }"
+              @click="drawSize = size"
+            >{{ size }}</button>
+          </div>
+        </div>
       </aside>
 
       <main class="canvas-wrap">
@@ -206,6 +233,13 @@
         ],
         colorPalette: ['#6B8EEA', '#4FA8A6', '#6DAE6B', '#D0A15A', '#E08960', '#C481B9', '#8E91C8', '#7E8AA2'],
         activeColor: '#6B8EEA',
+        lineStyle: 'solid',
+        drawSize: 'small',
+        sizePresets: {
+          small: { strokeWidth: 2, fontSize: 18 },
+          medium: { strokeWidth: 4, fontSize: 24 },
+          big: { strokeWidth: 6, fontSize: 30 }
+        },
         activeTool: 'select',
         store: {
           version: SCHEMA_VERSION,
@@ -253,6 +287,15 @@
       getCanvasContext() {
         const canvas = this.$refs.canvas
         return canvas ? canvas.getContext('2d') : null
+      },
+      getCurrentStrokeWidth() {
+        return (this.sizePresets[this.drawSize] || this.sizePresets.small).strokeWidth
+      },
+      getCurrentFontSize() {
+        return (this.sizePresets[this.drawSize] || this.sizePresets.small).fontSize
+      },
+      getDashArrayFromStyle(style) {
+        return style === 'dashed' ? [10, 7] : []
       },
       isElementSelected(elementId) {
         return this.selectedElementIds.includes(elementId)
@@ -773,7 +816,7 @@
               y: pos.y,
               text: text.trim(),
               color: this.activeColor,
-              fontSize: 18
+              fontSize: this.getCurrentFontSize()
             })
             this.setSingleSelection(this.activeSchema.elements[this.activeSchema.elements.length - 1].id)
             this.markDirty()
@@ -830,7 +873,8 @@
           id: uid('el'),
           stroke: this.activeColor,
           fill: hexToRgba(this.activeColor, 0.22),
-          strokeWidth: 2
+          strokeWidth: this.getCurrentStrokeWidth(),
+          strokeStyle: this.lineStyle
         }
 
         if (this.activeTool === 'rect' || this.activeTool === 'ellipse') {
@@ -1092,7 +1136,7 @@
             ctx.save()
             ctx.beginPath()
             ctx.rect(r.x, r.y, r.w, r.h)
-            ctx.lineWidth = 10
+            ctx.lineWidth = Math.max(10, (element.strokeWidth || 2) + 8)
             const isHit = ctx.isPointInStroke(x, y)
             ctx.restore()
             if (isHit) {
@@ -1107,7 +1151,7 @@
               ctx.save()
               ctx.beginPath()
               ctx.ellipse(r.x + rx, r.y + ry, rx, ry, 0, 0, Math.PI * 2)
-              ctx.lineWidth = 10
+              ctx.lineWidth = Math.max(10, (element.strokeWidth || 2) + 8)
               const isHit = ctx.isPointInStroke(x, y)
               ctx.restore()
               if (isHit) {
@@ -1117,7 +1161,7 @@
           }
           if (element.type === 'arrow') {
             const distance = pointToSegmentDistance(x, y, element.x1, element.y1, element.x2, element.y2)
-            if (distance <= 8) {
+            if (distance <= Math.max(8, (element.strokeWidth || 2) + 4)) {
               return element
             }
           }
@@ -1137,6 +1181,7 @@
         ctx.strokeStyle = element.stroke || '#1f2d54'
         ctx.fillStyle = element.fill || '#8ea9ff22'
         ctx.lineWidth = element.strokeWidth || 2
+        ctx.setLineDash(this.getDashArrayFromStyle(element.strokeStyle))
 
         if (element.type === 'rect') {
           const r = normalizeRect(element)
@@ -1184,6 +1229,7 @@
         }
 
         if (element.type === 'text') {
+          ctx.setLineDash([])
           ctx.font = `${element.fontSize || 18}px Space Grotesk`
           ctx.fillStyle = element.color || '#17233f'
           ctx.textBaseline = 'alphabetic'
@@ -1568,6 +1614,35 @@ body {
 
 .color-swatch.active {
   box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #275ca8;
+}
+
+.draw-options {
+  margin-top: 10px;
+  padding-top: 8px;
+}
+
+.options-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.option-chip {
+  border: 1px solid #c5d3ed;
+  background: #f8fbff;
+  color: #2a3f66;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.option-chip.active {
+  border-color: #7ca3e9;
+  background: #dce9ff;
+  color: #173b76;
 }
 
 .canvas-wrap {
