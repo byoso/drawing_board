@@ -436,6 +436,64 @@
         }
         return this.iconImageCache[src]
       },
+      loadExportableIconImage(src) {
+        if (!src) {
+          return Promise.resolve(null)
+        }
+        if (src.startsWith('data:')) {
+          return new Promise((resolve) => {
+            const image = new Image()
+            image.onload = () => resolve(image)
+            image.onerror = () => resolve(null)
+            image.src = src
+          })
+        }
+        return fetch(src, { mode: 'cors', credentials: 'omit' })
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error('Unable to fetch icon for export')
+            }
+            return response.blob()
+          })
+          .then((blob) => new Promise((resolve) => {
+            const objectUrl = URL.createObjectURL(blob)
+            const image = new Image()
+            image.onload = () => {
+              URL.revokeObjectURL(objectUrl)
+              resolve(image)
+            }
+            image.onerror = () => {
+              URL.revokeObjectURL(objectUrl)
+              resolve(null)
+            }
+            image.src = objectUrl
+          }))
+          .catch(() => null)
+      },
+      async drawElementForExport(ctx, element) {
+        if (element.type !== 'icon') {
+          this.drawElement(ctx, element, false)
+          return false
+        }
+
+        const r = normalizeRect(element)
+        const image = await this.loadExportableIconImage(element.src)
+        if (image && image.naturalWidth > 0) {
+          ctx.drawImage(image, r.x, r.y, r.w, r.h)
+          return false
+        }
+
+        ctx.save()
+        ctx.fillStyle = '#eef3fb'
+        ctx.fillRect(r.x, r.y, r.w, r.h)
+        ctx.strokeStyle = '#c6d4eb'
+        ctx.strokeRect(r.x, r.y, r.w, r.h)
+        ctx.fillStyle = '#6b7ea6'
+        ctx.font = '12px Space Grotesk'
+        ctx.fillText(element.name || 'Icon', r.x + 8, r.y + 20)
+        ctx.restore()
+        return true
+      },
       createIconSet() {
         const name = prompt('Icon set name:')
         if (!name || !name.trim()) {
@@ -1106,13 +1164,25 @@
         outCtx.fillRect(0, 0, exportWidth, exportHeight)
         outCtx.translate(margin - bounds.x, margin - bounds.y)
 
-        this.activeSchema.elements.forEach((element) => {
-          this.drawElement(outCtx, element, false)
+        let usedFallbackForRemoteIcons = false
+        for (const element of this.activeSchema.elements) {
+          const usedFallback = await this.drawElementForExport(outCtx, element)
+          usedFallbackForRemoteIcons = usedFallbackForRemoteIcons || usedFallback
+        }
+
+        const blob = await new Promise((resolve) => {
+          try {
+            outCanvas.toBlob((result) => resolve(result), 'image/png')
+          } catch (error) {
+            resolve(null)
+          }
         })
 
-        return await new Promise((resolve) => {
-          outCanvas.toBlob((blob) => resolve(blob), 'image/png')
-        })
+        if (blob && usedFallbackForRemoteIcons) {
+          this.showToast('Some remote icons could not be embedded and were replaced in the export.', 'error')
+        }
+
+        return blob
       },
       async saveCurrentSchemaAsPng() {
         const blob = await this.buildCroppedSchemaPngBlob()
