@@ -129,9 +129,10 @@
             class="drawing-canvas"
             tabindex="0"
             @pointerdown="onPointerDown"
-            @pointermove="onPointerMove"
+            @pointerenter="onCanvasPointerEnter"
+            @pointermove="onCanvasPointerMove($event); onPointerMove($event)"
             @pointerup="onPointerUp"
-            @pointerleave="onPointerUp"
+            @pointerleave="onCanvasPointerLeave($event); onPointerUp($event)"
             @dblclick="onCanvasDoubleClick"
             @dragover.prevent
             @drop.prevent="onCanvasDrop"
@@ -405,6 +406,9 @@
         historyBySchema: {},
         maxHistoryDepth: 80,
         iconImageCache: {},
+        copiedElements: [],
+        isPointerInCanvas: false,
+        lastCanvasPointer: { x: 0, y: 0 },
         renamingSchemaId: null,
         renameDraft: '',
         isDiagramsCollapsed: false,
@@ -1284,6 +1288,23 @@
           y: p.y + this.viewOffsetY
         }
       },
+      updateCanvasPointerPosition(event) {
+        if (!event || typeof event.clientX !== 'number' || typeof event.clientY !== 'number') {
+          return
+        }
+        this.lastCanvasPointer = this.getPointerPosition(event)
+      },
+      onCanvasPointerEnter(event) {
+        this.isPointerInCanvas = true
+        this.updateCanvasPointerPosition(event)
+      },
+      onCanvasPointerMove(event) {
+        this.isPointerInCanvas = true
+        this.updateCanvasPointerPosition(event)
+      },
+      onCanvasPointerLeave() {
+        this.isPointerInCanvas = false
+      },
       hitTextAt(x, y) {
         const ctx = this.getCanvasContext()
         if (!ctx || !this.activeSchema) {
@@ -1922,6 +1943,50 @@
           this.renderCanvas()
         }
       },
+      copySelectionToClipboard() {
+        if (!this.activeSchema || this.selectedElementIds.length === 0) {
+          return false
+        }
+        this.copiedElements = this.activeSchema.elements
+          .filter((element) => this.selectedElementIds.includes(element.id))
+          .map((element) => deepClone(element))
+        return this.copiedElements.length > 0
+      },
+      pasteClipboardSelection() {
+        if (!this.activeSchema || !Array.isArray(this.copiedElements) || this.copiedElements.length === 0) {
+          return false
+        }
+        if (!this.isPointerInCanvas) {
+          return false
+        }
+        const clones = this.copiedElements.map((element) => ({
+          ...deepClone(element),
+          id: uid('el')
+        }))
+        const ctx = this.getCanvasContext()
+        const sourceBounds = this.computeElementsBounds(this.copiedElements, ctx)
+        if (sourceBounds) {
+          const dx = this.lastCanvasPointer.x - (sourceBounds.x + sourceBounds.w / 2)
+          const dy = this.lastCanvasPointer.y - (sourceBounds.y + sourceBounds.h / 2)
+          clones.forEach((element) => {
+            if (element.type === 'arrow') {
+              element.x1 += dx
+              element.y1 += dy
+              element.x2 += dx
+              element.y2 += dy
+            } else {
+              element.x += dx
+              element.y += dy
+            }
+          })
+        }
+        this.pushHistoryCheckpoint()
+        this.activeSchema.elements.push(...clones)
+        this.selectedElementIds = clones.map((element) => element.id)
+        this.markDirty()
+        this.renderCanvas()
+        return true
+      },
       onGlobalKeyDown(event) {
         const target = event.target
         const targetTag = target && target.tagName ? target.tagName.toLowerCase() : ''
@@ -1946,6 +2011,20 @@
         if ((event.ctrlKey || event.metaKey) && key === 's') {
           event.preventDefault()
           this.saveCurrentSchema()
+          return
+        }
+
+        if ((event.ctrlKey || event.metaKey) && key === 'c' && this.activeTool === 'select') {
+          if (this.copySelectionToClipboard()) {
+            event.preventDefault()
+          }
+          return
+        }
+
+        if ((event.ctrlKey || event.metaKey) && key === 'v' && this.activeTool === 'select') {
+          if (this.pasteClipboardSelection()) {
+            event.preventDefault()
+          }
           return
         }
 
