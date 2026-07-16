@@ -89,6 +89,7 @@
             @pointermove="onPointerMove"
             @pointerup="onPointerUp"
             @pointerleave="onPointerUp"
+            @dblclick="onCanvasDoubleClick"
           ></canvas>
         </div>
       </main>
@@ -225,7 +226,6 @@
           resizeHandle: null
         },
         isDirty: false,
-        autosaveTimer: null,
         renamingSchemaId: null,
         renameDraft: '',
         toast: {
@@ -344,12 +344,14 @@
         this.store.activeSchemaId = this.activeSchemaId
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.store))
       },
+      confirmDiscardUnsaved(actionLabel = 'continue') {
+        if (!this.isDirty) {
+          return true
+        }
+        return confirm(`You have unsaved changes. Discard them and ${actionLabel}?`)
+      },
       markDirty() {
         this.isDirty = true
-        clearTimeout(this.autosaveTimer)
-        this.autosaveTimer = setTimeout(() => {
-          this.saveCurrentSchema(false)
-        }, 450)
       },
       saveCurrentSchema(showToast = true) {
         if (!this.activeSchema) {
@@ -363,8 +365,8 @@
         }
       },
       createSchema() {
-        if (this.isDirty) {
-          this.saveCurrentSchema(false)
+        if (!this.confirmDiscardUnsaved('create a new diagram')) {
+          return
         }
         const name = `Diagram ${this.store.schemas.length + 1}`
         const schema = this.makeEmptySchema(name)
@@ -379,8 +381,8 @@
         if (schemaId === this.activeSchemaId) {
           return
         }
-        if (this.isDirty) {
-          this.saveCurrentSchema(false)
+        if (!this.confirmDiscardUnsaved('switch diagrams')) {
+          return
         }
         this.activeSchemaId = schemaId
         this.clearSelection()
@@ -448,8 +450,8 @@
           this.showToast('Invalid JSON format or unsupported version.', 'error')
           return
         }
-        if (this.isDirty) {
-          this.saveCurrentSchema(false)
+        if (!this.confirmDiscardUnsaved('import this diagram')) {
+          return
         }
         const schema = this.makeEmptySchema(payload.name || `Import ${new Date().toLocaleString('en-GB')}`)
         schema.elements = payload.elements.map((element) => ({ ...element, id: element.id || uid('el') }))
@@ -589,9 +591,50 @@
           y: event.clientY - rect.top
         }
       },
+      hitTextAt(x, y) {
+        const ctx = this.getCanvasContext()
+        if (!ctx || !this.activeSchema) {
+          return null
+        }
+        for (let i = this.activeSchema.elements.length - 1; i >= 0; i -= 1) {
+          const element = this.activeSchema.elements[i]
+          if (element.type !== 'text') {
+            continue
+          }
+          ctx.save()
+          ctx.font = `${element.fontSize || 18}px Space Grotesk`
+          const width = ctx.measureText(element.text || '').width
+          ctx.restore()
+          const height = element.fontSize || 18
+          if (x >= element.x && x <= element.x + width && y <= element.y && y >= element.y - height) {
+            return element
+          }
+        }
+        return null
+      },
+      onCanvasDoubleClick(event) {
+        if (this.activeTool !== 'select') {
+          return
+        }
+        const pos = this.getPointerPosition(event)
+        const textElement = this.hitTextAt(pos.x, pos.y)
+        if (!textElement) {
+          return
+        }
+        const updatedText = prompt('Edit text:', textElement.text || '')
+        if (updatedText === null) {
+          return
+        }
+        textElement.text = updatedText
+        this.setSingleSelection(textElement.id)
+        this.markDirty()
+        this.renderCanvas()
+      },
       onPointerDown(event) {
         const canvas = this.$refs.canvas
-        canvas.focus()
+        if (canvas && typeof canvas.focus === 'function') {
+          canvas.focus({ preventScroll: true })
+        }
         const pos = this.getPointerPosition(event)
         this.pointerState.pointerId = event.pointerId
 
@@ -732,7 +775,7 @@
           if (!target || !this.pointerState.startElement || !this.pointerState.resizeHandle) {
             return
           }
-          if (target.type !== 'rect' && target.type !== 'ellipse') {
+          if (target.type !== 'rect' && target.type !== 'ellipse' && target.type !== 'arrow') {
             return
           }
           this.applyResize(target, this.pointerState.startElement, this.pointerState.resizeHandle, pos.x, pos.y)
@@ -796,7 +839,16 @@
         this.renderCanvas()
       },
       getResizeHandles(element) {
-        if (!element || (element.type !== 'rect' && element.type !== 'ellipse')) {
+        if (!element) {
+          return []
+        }
+        if (element.type === 'arrow') {
+          return [
+            { key: 'start', x: element.x1, y: element.y1, cursor: 'move' },
+            { key: 'end', x: element.x2, y: element.y2, cursor: 'move' }
+          ]
+        }
+        if (element.type !== 'rect' && element.type !== 'ellipse') {
           return []
         }
         const r = normalizeRect(element)
@@ -820,7 +872,7 @@
           return null
         }
         const element = this.activeSchema.elements.find((item) => item.id === this.selectedElementIds[0])
-        if (!element || (element.type !== 'rect' && element.type !== 'ellipse')) {
+        if (!element || (element.type !== 'rect' && element.type !== 'ellipse' && element.type !== 'arrow')) {
           return null
         }
         const handles = this.getResizeHandles(element)
@@ -834,6 +886,17 @@
         return null
       },
       applyResize(target, startElement, handle, pointerX, pointerY) {
+        if (target.type === 'arrow') {
+          if (handle === 'start') {
+            target.x1 = pointerX
+            target.y1 = pointerY
+          }
+          if (handle === 'end') {
+            target.x2 = pointerX
+            target.y2 = pointerY
+          }
+          return
+        }
         const minSize = 12
         const start = normalizeRect(startElement)
         let left = start.x
@@ -1040,7 +1103,7 @@
         if (this.activeSchema) {
           this.activeSchema.elements.forEach((element) => {
             this.drawElement(ctx, element, this.isElementSelected(element.id))
-            if (this.selectedElementIds.length === 1 && this.isElementSelected(element.id) && (element.type === 'rect' || element.type === 'ellipse')) {
+            if (this.selectedElementIds.length === 1 && this.isElementSelected(element.id) && (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')) {
               this.drawResizeHandles(ctx, element)
             }
           })
@@ -1132,12 +1195,8 @@
       window.addEventListener('keydown', this.onGlobalKeyDown)
     },
     beforeUnmount() {
-      clearTimeout(this.autosaveTimer)
       window.removeEventListener('resize', this.renderCanvas)
       window.removeEventListener('keydown', this.onGlobalKeyDown)
-      if (this.isDirty) {
-        this.saveCurrentSchema(false)
-      }
     }
   }).mount('#app')
 </script>
@@ -1156,6 +1215,12 @@
 
 * {
   box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
 }
 
 body {
