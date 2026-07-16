@@ -260,6 +260,7 @@
 
   const STORAGE_KEY = 'drawing_board_store_v1'
   const SCHEMA_VERSION = 1
+  const RECT_CORNER_RADIUS = 8
 
   function uid(prefix = 'id') {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
@@ -275,6 +276,21 @@
     const w = Math.abs(el.w)
     const h = Math.abs(el.h)
     return { x, y, w, h }
+  }
+
+  function drawRoundedRectPath(ctx, x, y, w, h, radius = RECT_CORNER_RADIUS) {
+    const safeRadius = Math.max(0, Math.min(radius, w / 2, h / 2))
+    ctx.beginPath()
+    ctx.moveTo(x + safeRadius, y)
+    ctx.lineTo(x + w - safeRadius, y)
+    ctx.arcTo(x + w, y, x + w, y + safeRadius, safeRadius)
+    ctx.lineTo(x + w, y + h - safeRadius)
+    ctx.arcTo(x + w, y + h, x + w - safeRadius, y + h, safeRadius)
+    ctx.lineTo(x + safeRadius, y + h)
+    ctx.arcTo(x, y + h, x, y + h - safeRadius, safeRadius)
+    ctx.lineTo(x, y + safeRadius)
+    ctx.arcTo(x, y, x + safeRadius, y, safeRadius)
+    ctx.closePath()
   }
 
   function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
@@ -1685,8 +1701,9 @@
 
         if (element.type === 'rect') {
           const r = normalizeRect(element)
-          ctx.fillRect(r.x, r.y, r.w, r.h)
-          ctx.strokeRect(r.x, r.y, r.w, r.h)
+          drawRoundedRectPath(ctx, r.x, r.y, r.w, r.h)
+          ctx.fill()
+          ctx.stroke()
           if (selected) {
             this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
           }
