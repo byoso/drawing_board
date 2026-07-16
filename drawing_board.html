@@ -89,6 +89,27 @@
             >{{ size }}</button>
           </div>
         </div>
+
+        <div
+          v-if="activeTool === 'select' && selectedElementIds.length === 1 && getSelectedLayerInfo()"
+          class="layer-controls"
+          aria-label="Layer controls"
+        >
+          <p class="palette-title">Layer</p>
+          <div class="layer-row">
+            <div class="layer-input-wrap">
+              <input
+                class="input is-small layer-input"
+                type="number"
+                min="1"
+                :max="getSelectedLayerInfo().total"
+                :value="getSelectedLayerInfo().index + 1"
+                @change="onLayerInputChange"
+              >
+              <span class="layer-info">/ {{ getSelectedLayerInfo().total }}</span>
+            </div>
+          </div>
+        </div>
       </aside>
 
       <main class="canvas-wrap">
@@ -166,16 +187,22 @@
           >
             <div class="icon-set-row">
               <strong>{{ iconSet.name }}</strong>
-              <span>{{ iconSet.icons.length }} icons</span>
+              <div class="icon-set-row-meta">
+                <span>{{ iconSet.icons.length }} icons</span>
+                <button class="button is-small ghost-btn collapse-btn" @click.stop="toggleIconSetCollapsed(iconSet.id)">
+                  {{ iconSet.collapsed ? 'Show' : 'Hide' }}
+                </button>
+              </div>
             </div>
-            <div class="icon-set-actions">
+            <div class="icon-set-actions" v-if="!iconSet.collapsed">
               <button class="button is-small ghost-btn" @click="addIconUrl(iconSet.id)">Add URL icon</button>
               <button class="button is-small ghost-btn" @click="openIconUploadPicker(iconSet.id)">Upload icon</button>
+              <button class="button is-small ghost-btn" @click="renameIconSet(iconSet.id)">Rename</button>
               <button class="button is-small ghost-btn" @click="exportIconSet(iconSet.id)">Export JSON</button>
               <button class="button is-small danger-btn" @click="deleteIconSet(iconSet.id)">Delete set</button>
             </div>
 
-            <div class="icon-list" v-if="iconSet.icons.length">
+            <div class="icon-list" v-if="!iconSet.collapsed && iconSet.icons.length">
               <div
                 v-for="icon in iconSet.icons"
                 :key="icon.id"
@@ -361,6 +388,7 @@
         return {
           id: iconSet.id || uid('iconset'),
           name: iconSet.name || 'Untitled set',
+          collapsed: Boolean(iconSet.collapsed),
           icons: Array.isArray(iconSet.icons)
             ? iconSet.icons.map((icon) => ({
                 id: icon.id || uid('icon'),
@@ -427,6 +455,26 @@
         this.iconSets = this.iconSets.filter((item) => item.id !== iconSetId)
         this.persistStore()
       },
+      renameIconSet(iconSetId) {
+        const iconSet = this.iconSets.find((item) => item.id === iconSetId)
+        if (!iconSet) {
+          return
+        }
+        const nextName = prompt('Icon set name:', iconSet.name)
+        if (!nextName || !nextName.trim()) {
+          return
+        }
+        iconSet.name = nextName.trim()
+        this.persistStore()
+      },
+      toggleIconSetCollapsed(iconSetId) {
+        const iconSet = this.iconSets.find((item) => item.id === iconSetId)
+        if (!iconSet) {
+          return
+        }
+        iconSet.collapsed = !iconSet.collapsed
+        this.persistStore()
+      },
       openIconUploadPicker(iconSetId) {
         this.pendingIconSetId = iconSetId
         this.$refs.iconUploadInput.value = ''
@@ -467,6 +515,13 @@
       deleteIcon(iconSetId, iconId) {
         const iconSet = this.iconSets.find((item) => item.id === iconSetId)
         if (!iconSet) {
+          return
+        }
+        const icon = iconSet.icons.find((item) => item.id === iconId)
+        if (!icon) {
+          return
+        }
+        if (!confirm(`Delete icon "${icon.name}"?`)) {
           return
         }
         iconSet.icons = iconSet.icons.filter((icon) => icon.id !== iconId)
@@ -601,6 +656,77 @@
       clearSelection() {
         this.selectedElementIds = []
       },
+      getSelectedLayerInfo() {
+        if (!this.activeSchema || this.activeTool !== 'select' || this.selectedElementIds.length !== 1) {
+          return null
+        }
+        const selectedId = this.selectedElementIds[0]
+        const index = this.activeSchema.elements.findIndex((element) => element.id === selectedId)
+        if (index === -1) {
+          return null
+        }
+        const total = this.activeSchema.elements.length
+        return {
+          index,
+          total,
+          label: `Layer ${index + 1} / ${total}`,
+          canMoveUp: index < total - 1,
+          canMoveDown: index > 0
+        }
+      },
+      moveElementLayer(delta) {
+        if (!this.activeSchema || this.selectedElementIds.length !== 1 || delta === 0) {
+          return
+        }
+        const selectedId = this.selectedElementIds[0]
+        const elements = this.activeSchema.elements
+        const index = elements.findIndex((element) => element.id === selectedId)
+        if (index === -1) {
+          return
+        }
+        const targetIndex = index + delta
+        if (targetIndex < 0 || targetIndex >= elements.length) {
+          return
+        }
+        this.pushHistoryCheckpoint()
+        const [element] = elements.splice(index, 1)
+        elements.splice(targetIndex, 0, element)
+        this.markDirty()
+        this.renderCanvas()
+      },
+      moveSelectedElementToLayer(targetLayerIndex) {
+        if (!this.activeSchema || this.selectedElementIds.length !== 1) {
+          return
+        }
+        const elements = this.activeSchema.elements
+        const selectedId = this.selectedElementIds[0]
+        const currentIndex = elements.findIndex((element) => element.id === selectedId)
+        if (currentIndex === -1) {
+          return
+        }
+        const clampedTargetIndex = Math.max(0, Math.min(elements.length - 1, targetLayerIndex))
+        if (clampedTargetIndex === currentIndex) {
+          return
+        }
+        this.pushHistoryCheckpoint()
+        const [element] = elements.splice(currentIndex, 1)
+        elements.splice(clampedTargetIndex, 0, element)
+        this.markDirty()
+        this.renderCanvas()
+      },
+      moveLayerUp() {
+        this.moveElementLayer(1)
+      },
+      moveLayerDown() {
+        this.moveElementLayer(-1)
+      },
+      onLayerInputChange(event) {
+        const nextValue = Number.parseInt(event.target.value, 10)
+        if (Number.isNaN(nextValue)) {
+          return
+        }
+        this.moveSelectedElementToLayer(nextValue - 1)
+      },
       getElementBounds(element, ctx) {
         if (!element) {
           return null
@@ -657,7 +783,7 @@
                   updatedAt: typeof schema.updatedAt === 'number' ? schema.updatedAt : Date.now(),
                   elements: Array.isArray(schema.elements) ? schema.elements : []
                 })),
-                iconSets: Array.isArray(parsed.iconSets) ? parsed.iconSets : []
+                iconSets: Array.isArray(parsed.iconSets) ? parsed.iconSets.map((iconSet) => this.normalizeIconSet(iconSet)) : []
               }
               this.iconSets = this.store.iconSets
             }
@@ -1935,6 +2061,34 @@ body {
   padding-top: 8px;
 }
 
+.layer-controls {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e1e8f5;
+}
+
+.layer-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layer-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.layer-input {
+  width: 84px;
+}
+
+.layer-info {
+  font-size: 0.8rem;
+  color: #3b4b6a;
+  font-weight: 600;
+}
+
 .options-row {
   display: flex;
   gap: 8px;
@@ -2067,6 +2221,12 @@ body {
   margin-bottom: 8px;
 }
 
+.icon-set-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .icon-set-row strong {
   font-size: 0.9rem;
 }
@@ -2074,6 +2234,11 @@ body {
 .icon-set-row span {
   color: #7182a0;
   font-size: 0.75rem;
+}
+
+.collapse-btn {
+  padding: 0.2rem 0.45rem;
+  height: auto;
 }
 
 .icon-set-actions {
