@@ -216,16 +216,23 @@
         selectedElementIds: [],
         draftElement: null,
         marqueeRect: null,
+        viewOffsetX: 0,
+        viewOffsetY: 0,
         pointerState: {
           mode: null,
           pointerId: null,
           startX: 0,
           startY: 0,
+          startViewOffsetX: 0,
+          startViewOffsetY: 0,
           startElement: null,
           startElements: null,
-          resizeHandle: null
+          resizeHandle: null,
+          historyCaptured: false
         },
         isDirty: false,
+        historyBySchema: {},
+        maxHistoryDepth: 80,
         renamingSchemaId: null,
         renameDraft: '',
         toast: {
@@ -344,6 +351,90 @@
         this.store.activeSchemaId = this.activeSchemaId
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.store))
       },
+      ensureSchemaHistory(schemaId) {
+        if (!schemaId) {
+          return null
+        }
+        if (!this.historyBySchema[schemaId]) {
+          this.historyBySchema[schemaId] = {
+            past: [],
+            future: []
+          }
+        }
+        return this.historyBySchema[schemaId]
+      },
+      areSnapshotsEqual(a, b) {
+        return JSON.stringify(a) === JSON.stringify(b)
+      },
+      seedSchemaHistory(schema) {
+        if (!schema) {
+          return
+        }
+        this.historyBySchema[schema.id] = {
+          past: [deepClone(schema.elements || [])],
+          future: []
+        }
+      },
+      pushHistoryCheckpoint() {
+        if (!this.activeSchema) {
+          return
+        }
+        const history = this.ensureSchemaHistory(this.activeSchema.id)
+        const snapshot = deepClone(this.activeSchema.elements)
+        const last = history.past.length > 0 ? history.past[history.past.length - 1] : null
+        if (!last || !this.areSnapshotsEqual(last, snapshot)) {
+          history.past.push(snapshot)
+          if (history.past.length > this.maxHistoryDepth) {
+            history.past.shift()
+          }
+        }
+        history.future = []
+      },
+      undo() {
+        if (!this.activeSchema) {
+          return
+        }
+        const history = this.ensureSchemaHistory(this.activeSchema.id)
+        const current = deepClone(this.activeSchema.elements)
+        let previous = null
+        while (history.past.length > 0) {
+          const candidate = history.past.pop()
+          if (!this.areSnapshotsEqual(candidate, current)) {
+            previous = candidate
+            break
+          }
+        }
+        if (!previous) {
+          return
+        }
+        history.future.push(current)
+        if (history.future.length > this.maxHistoryDepth) {
+          history.future.shift()
+        }
+        this.activeSchema.elements = deepClone(previous)
+        this.clearSelection()
+        this.isDirty = true
+        this.renderCanvas()
+      },
+      redo() {
+        if (!this.activeSchema) {
+          return
+        }
+        const history = this.ensureSchemaHistory(this.activeSchema.id)
+        if (history.future.length === 0) {
+          return
+        }
+        const current = deepClone(this.activeSchema.elements)
+        const next = history.future.pop()
+        history.past.push(current)
+        if (history.past.length > this.maxHistoryDepth) {
+          history.past.shift()
+        }
+        this.activeSchema.elements = deepClone(next)
+        this.clearSelection()
+        this.isDirty = true
+        this.renderCanvas()
+      },
       confirmDiscardUnsaved(actionLabel = 'continue') {
         if (!this.isDirty) {
           return true
@@ -371,6 +462,7 @@
         const name = `Diagram ${this.store.schemas.length + 1}`
         const schema = this.makeEmptySchema(name)
         this.store.schemas.push(schema)
+        this.seedSchemaHistory(schema)
         this.activeSchemaId = schema.id
         this.clearSelection()
         this.isDirty = false
@@ -417,8 +509,11 @@
           return
         }
         this.store.schemas = this.store.schemas.filter((item) => item.id !== schemaId)
+        delete this.historyBySchema[schemaId]
         if (this.store.schemas.length === 0) {
-          this.store.schemas.push(this.makeEmptySchema('First diagram'))
+          const fallback = this.makeEmptySchema('First diagram')
+          this.store.schemas.push(fallback)
+          this.seedSchemaHistory(fallback)
         }
         if (this.activeSchemaId === schemaId) {
           this.activeSchemaId = this.store.schemas[0].id
@@ -457,6 +552,7 @@
         schema.elements = payload.elements.map((element) => ({ ...element, id: element.id || uid('el') }))
         schema.updatedAt = Date.now()
         this.store.schemas.push(schema)
+        this.seedSchemaHistory(schema)
         this.activeSchemaId = schema.id
         this.clearSelection()
         this.isDirty = false
@@ -583,12 +679,19 @@
           this.showToast('Clipboard copy failed (permission may be denied).', 'error')
         }
       },
-      getPointerPosition(event) {
+      getCanvasPosition(event) {
         const canvas = this.$refs.canvas
         const rect = canvas.getBoundingClientRect()
         return {
           x: event.clientX - rect.left,
           y: event.clientY - rect.top
+        }
+      },
+      getPointerPosition(event) {
+        const p = this.getCanvasPosition(event)
+        return {
+          x: p.x + this.viewOffsetX,
+          y: p.y + this.viewOffsetY
         }
       },
       hitTextAt(x, y) {
@@ -625,22 +728,44 @@
         if (updatedText === null) {
           return
         }
+        if (updatedText === textElement.text) {
+          return
+        }
+        this.pushHistoryCheckpoint()
         textElement.text = updatedText
         this.setSingleSelection(textElement.id)
         this.markDirty()
         this.renderCanvas()
       },
       onPointerDown(event) {
+        if (event.button === 1) {
+          event.preventDefault()
+          const canvasPos = this.getCanvasPosition(event)
+          this.pointerState.pointerId = event.pointerId
+          this.pointerState.mode = 'pan'
+          this.pointerState.startX = canvasPos.x
+          this.pointerState.startY = canvasPos.y
+          this.pointerState.startViewOffsetX = this.viewOffsetX
+          this.pointerState.startViewOffsetY = this.viewOffsetY
+          return
+        }
+
+        if (event.button !== 0) {
+          return
+        }
+
         const canvas = this.$refs.canvas
         if (canvas && typeof canvas.focus === 'function') {
           canvas.focus({ preventScroll: true })
         }
         const pos = this.getPointerPosition(event)
         this.pointerState.pointerId = event.pointerId
+        this.pointerState.historyCaptured = false
 
         if (this.activeTool === 'text') {
           const text = prompt('Text:')
           if (text && text.trim()) {
+            this.pushHistoryCheckpoint()
             this.activeSchema.elements.push({
               id: uid('el'),
               type: 'text',
@@ -741,6 +866,18 @@
         if (!this.pointerState.pointerId || event.pointerId !== this.pointerState.pointerId) {
           return
         }
+
+        if (this.pointerState.mode === 'pan') {
+          event.preventDefault()
+          const canvasPos = this.getCanvasPosition(event)
+          const dx = canvasPos.x - this.pointerState.startX
+          const dy = canvasPos.y - this.pointerState.startY
+          this.viewOffsetX = Math.max(0, this.pointerState.startViewOffsetX - dx)
+          this.viewOffsetY = Math.max(0, this.pointerState.startViewOffsetY - dy)
+          this.renderCanvas()
+          return
+        }
+
         const pos = this.getPointerPosition(event)
 
         if (this.pointerState.mode === 'drag' && this.selectedElementIds.length > 0) {
@@ -749,6 +886,13 @@
           }
           const dx = pos.x - this.pointerState.startX
           const dy = pos.y - this.pointerState.startY
+          if (dx === 0 && dy === 0) {
+            return
+          }
+          if (!this.pointerState.historyCaptured) {
+            this.pushHistoryCheckpoint()
+            this.pointerState.historyCaptured = true
+          }
           this.selectedElementIds.forEach((elementId) => {
             const target = this.activeSchema.elements.find((element) => element.id === elementId)
             const startElement = this.pointerState.startElements[elementId]
@@ -777,6 +921,10 @@
           }
           if (target.type !== 'rect' && target.type !== 'ellipse' && target.type !== 'arrow') {
             return
+          }
+          if (!this.pointerState.historyCaptured) {
+            this.pushHistoryCheckpoint()
+            this.pointerState.historyCaptured = true
           }
           this.applyResize(target, this.pointerState.startElement, this.pointerState.resizeHandle, pos.x, pos.y)
           this.markDirty()
@@ -813,6 +961,13 @@
         if (this.pointerState.pointerId && event.pointerId !== this.pointerState.pointerId) {
           return
         }
+
+        if (this.pointerState.mode === 'pan') {
+          this.pointerState.mode = null
+          this.pointerState.pointerId = null
+          return
+        }
+
         if (this.pointerState.mode === 'draw' && this.draftElement) {
           const element = this.draftElement
           let shouldAdd = true
@@ -823,6 +978,7 @@
             shouldAdd = rect.w > 6 && rect.h > 6
           }
           if (shouldAdd) {
+            this.pushHistoryCheckpoint()
             this.activeSchema.elements.push(element)
             this.setSingleSelection(element.id)
             this.markDirty()
@@ -836,6 +992,7 @@
         this.pointerState.startElement = null
         this.pointerState.startElements = null
         this.pointerState.resizeHandle = null
+        this.pointerState.historyCaptured = false
         this.renderCanvas()
       },
       getResizeHandles(element) {
@@ -1087,18 +1244,25 @@
         ctx.strokeStyle = '#e9eef8'
         ctx.lineWidth = 1
 
-        for (let x = 20; x < width; x += 20) {
+        const grid = 20
+        const startX = -(((this.viewOffsetX % grid) + grid) % grid)
+        const startY = -(((this.viewOffsetY % grid) + grid) % grid)
+
+        for (let x = startX; x < width; x += grid) {
           ctx.beginPath()
           ctx.moveTo(x, 0)
           ctx.lineTo(x, height)
           ctx.stroke()
         }
-        for (let y = 20; y < height; y += 20) {
+        for (let y = startY; y < height; y += grid) {
           ctx.beginPath()
           ctx.moveTo(0, y)
           ctx.lineTo(width, y)
           ctx.stroke()
         }
+
+        ctx.save()
+        ctx.translate(-this.viewOffsetX, -this.viewOffsetY)
 
         if (this.activeSchema) {
           this.activeSchema.elements.forEach((element) => {
@@ -1123,12 +1287,15 @@
           ctx.strokeRect(this.marqueeRect.x, this.marqueeRect.y, this.marqueeRect.w, this.marqueeRect.h)
           ctx.restore()
         }
+
+        ctx.restore()
       },
       deleteSelectedElement() {
         if (!this.activeSchema || this.selectedElementIds.length === 0) {
           return
         }
         const before = this.activeSchema.elements.length
+        this.pushHistoryCheckpoint()
         this.activeSchema.elements = this.activeSchema.elements.filter((element) => !this.selectedElementIds.includes(element.id))
         if (this.activeSchema.elements.length !== before) {
           this.clearSelection()
@@ -1145,6 +1312,18 @@
         }
 
         const key = event.key.toLowerCase()
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && key === 'z') {
+          event.preventDefault()
+          this.undo()
+          return
+        }
+
+        if ((event.ctrlKey || event.metaKey) && (key === 'y' || (event.shiftKey && key === 'z'))) {
+          event.preventDefault()
+          this.redo()
+          return
+        }
+
         if ((event.ctrlKey || event.metaKey) && key === 's') {
           event.preventDefault()
           this.saveCurrentSchema()
@@ -1188,6 +1367,7 @@
     },
     mounted() {
       this.initStore()
+      this.store.schemas.forEach((schema) => this.seedSchemaHistory(schema))
       this.$nextTick(() => {
         this.renderCanvas()
       })
