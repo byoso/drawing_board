@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- favicon example -->
+  <link rel="icon" href="https://i.goopics.net/lhw9s2.png">
+  <title>Drawing Board</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@600;700&display=swap" rel="stylesheet">
+  <!-- bulma -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+  <!-- vue.js 3 -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body>
+
+<div class="container" id="app">
+  <section class="board-shell">
+    <header class="top-bar">
+      <div class="brand">
+        <h1>Drawing Board</h1>
+        <p>Simple and fast diagrams, stored locally</p>
+      </div>
+      <div class="top-actions">
+        <button class="button is-small png-save-btn" @click="saveCurrentSchemaAsPng">Save PNG</button>
+        <button class="button is-small png-clip-btn" @click="copySchemaPngToClipboard">PNG to Clipboard</button>
+        <button class="button is-small save-btn" @click="saveCurrentSchema">Save</button>
+        <button class="button is-small ghost-btn" @click="createSchema">New</button>
+        <button class="button is-small ghost-btn" @click="exportCurrentSchema">Export JSON</button>
+        <button class="button is-small ghost-btn" @click="openImportPicker">Import JSON</button>
+      </div>
+    </header>
+
+    <div class="main-grid">
+      <aside class="tool-panel">
+        <p class="panel-title">Tools</p>
+        <button
+          v-for="tool in tools"
+          :key="tool.id"
+          class="tool-btn"
+          :class="{ active: activeTool === tool.id }"
+          @click="activeTool = tool.id"
+        >
+          <span>{{ tool.shortcut }}</span>
+          <strong>{{ tool.label }}</strong>
+        </button>
+
+        <div class="tool-hint">
+          <p><strong>Shortcuts:</strong></p>
+          <p>S select, R rectangle, E ellipse, A arrow, T text, Del delete.</p>
+        </div>
+
+        <div class="color-palette" aria-label="Drawing color palette">
+          <p class="palette-title">Color</p>
+          <div class="palette-grid">
+            <button
+              v-for="color in colorPalette"
+              :key="color"
+              class="color-swatch"
+              :class="{ active: activeColor === color }"
+              :style="{ backgroundColor: color }"
+              @click="activeColor = color"
+              :title="color"
+              aria-label="Select color"
+            ></button>
+          </div>
+        </div>
+      </aside>
+
+      <main class="canvas-wrap">
+        <div class="canvas-toolbar">
+          <p>
+            Active diagram:
+            <strong>{{ activeSchema ? activeSchema.name : 'None' }}</strong>
+          </p>
+          <p class="save-state" :class="{ dirty: isDirty }">
+            {{ isDirty ? 'Unsaved changes' : 'Saved' }}
+          </p>
+        </div>
+
+        <div class="canvas-zone">
+          <canvas
+            ref="canvas"
+            class="drawing-canvas"
+            tabindex="0"
+            @pointerdown="onPointerDown"
+            @pointermove="onPointerMove"
+            @pointerup="onPointerUp"
+            @pointerleave="onPointerUp"
+          ></canvas>
+        </div>
+      </main>
+
+      <aside class="schema-panel">
+        <p class="panel-title">Diagrams</p>
+        <div class="schema-list">
+          <article
+            v-for="schema in sortedSchemas"
+            :key="schema.id"
+            class="schema-item"
+            :class="{ active: schema.id === activeSchemaId }"
+            @click="activateSchema(schema.id)"
+          >
+            <template v-if="renamingSchemaId === schema.id">
+              <input
+                class="input is-small"
+                v-model="renameDraft"
+                @keydown.enter.stop.prevent="commitRename(schema.id)"
+                @blur="commitRename(schema.id)"
+                @click.stop
+              >
+            </template>
+            <template v-else>
+              <div class="schema-row">
+                <strong>{{ schema.name }}</strong>
+                <span>{{ formatDate(schema.updatedAt) }}</span>
+              </div>
+            </template>
+            <div class="schema-actions" @click.stop>
+              <button class="button is-small ghost-btn" @click="startRename(schema)">Rename</button>
+              <button class="button is-small danger-btn" @click="deleteSchema(schema.id)">Delete</button>
+            </div>
+          </article>
+        </div>
+      </aside>
+    </div>
+
+    <input
+      ref="importInput"
+      type="file"
+      class="is-hidden"
+      accept="application/json,.json"
+      @change="onImportFileChange"
+    >
+
+    <div v-if="toast.message" class="toast" :class="toast.type">
+      {{ toast.message }}
+    </div>
+  </section>
+</div>
+
+
+</body>
+
+<script>
+  const { createApp } = Vue
+
+  const STORAGE_KEY = 'drawing_board_store_v1'
+  const SCHEMA_VERSION = 1
+
+  function uid(prefix = 'id') {
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+  }
+
+  function deepClone(obj) {
+    return JSON.parse(JSON.stringify(obj))
+  }
+
+  function normalizeRect(el) {
+    const x = el.w < 0 ? el.x + el.w : el.x
+    const y = el.h < 0 ? el.y + el.h : el.y
+    const w = Math.abs(el.w)
+    const h = Math.abs(el.h)
+    return { x, y, w, h }
+  }
+
+  function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1
+    const dy = y2 - y1
+    if (dx === 0 && dy === 0) {
+      const ddx = px - x1
+      const ddy = py - y1
+      return Math.sqrt(ddx * ddx + ddy * ddy)
+    }
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
+    const cx = x1 + t * dx
+    const cy = y1 + t * dy
+    const ddx = px - cx
+    const ddy = py - cy
+    return Math.sqrt(ddx * ddx + ddy * ddy)
+  }
+
+  function hexToRgba(hex, alpha) {
+    const cleaned = (hex || '').replace('#', '')
+    if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+      return `rgba(129, 164, 255, ${alpha})`
+    }
+    const r = parseInt(cleaned.slice(0, 2), 16)
+    const g = parseInt(cleaned.slice(2, 4), 16)
+    const b = parseInt(cleaned.slice(4, 6), 16)
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  }
+
+  createApp({
+    data() {
+      return {
+        tools: [
+          { id: 'select', label: 'Select', shortcut: 'S' },
+          { id: 'rect', label: 'Rectangle', shortcut: 'R' },
+          { id: 'ellipse', label: 'Ellipse', shortcut: 'E' },
+          { id: 'arrow', label: 'Arrow', shortcut: 'A' },
+          { id: 'text', label: 'Text', shortcut: 'T' }
+        ],
+        colorPalette: ['#6B8EEA', '#4FA8A6', '#6DAE6B', '#D0A15A', '#E08960', '#C481B9', '#8E91C8', '#7E8AA2'],
+        activeColor: '#6B8EEA',
+        activeTool: 'select',
+        store: {
+          version: SCHEMA_VERSION,
+          activeSchemaId: null,
+          schemas: []
+        },
+        activeSchemaId: null,
+        selectedElementIds: [],
+        draftElement: null,
+        marqueeRect: null,
+        pointerState: {
+          mode: null,
+          pointerId: null,
+          startX: 0,
+          startY: 0,
+          startElement: null,
+          startElements: null,
+          resizeHandle: null
+        },
+        isDirty: false,
+        autosaveTimer: null,
+        renamingSchemaId: null,
+        renameDraft: '',
+        toast: {
+          message: '',
+          type: 'info'
+        }
+      }
+    },
+    computed: {
+      activeSchema() {
+        return this.store.schemas.find((schema) => schema.id === this.activeSchemaId) || null
+      },
+      sortedSchemas() {
+        return [...this.store.schemas].sort((a, b) => b.updatedAt - a.updatedAt)
+      }
+    },
+    methods: {
+      getCanvasContext() {
+        const canvas = this.$refs.canvas
+        return canvas ? canvas.getContext('2d') : null
+      },
+      isElementSelected(elementId) {
+        return this.selectedElementIds.includes(elementId)
+      },
+      setSingleSelection(elementId) {
+        this.selectedElementIds = elementId ? [elementId] : []
+      },
+      clearSelection() {
+        this.selectedElementIds = []
+      },
+      getElementBounds(element, ctx) {
+        if (!element) {
+          return null
+        }
+        if (element.type === 'rect' || element.type === 'ellipse') {
+          const r = normalizeRect(element)
+          return { x: r.x, y: r.y, w: r.w, h: r.h }
+        }
+        if (element.type === 'arrow') {
+          return {
+            x: Math.min(element.x1, element.x2),
+            y: Math.min(element.y1, element.y2),
+            w: Math.max(1, Math.abs(element.x2 - element.x1)),
+            h: Math.max(1, Math.abs(element.y2 - element.y1))
+          }
+        }
+        if (element.type === 'text') {
+          const localCtx = ctx || this.getCanvasContext()
+          if (!localCtx) {
+            return { x: element.x, y: element.y - 18, w: 1, h: 18 }
+          }
+          localCtx.save()
+          localCtx.font = `${element.fontSize || 18}px Space Grotesk`
+          const width = localCtx.measureText(element.text || '').width
+          localCtx.restore()
+          const height = element.fontSize || 18
+          return { x: element.x, y: element.y - height, w: Math.max(1, width), h: height }
+        }
+        return null
+      },
+      isBoundsInsideMarquee(bounds, marquee) {
+        if (!bounds || !marquee) {
+          return false
+        }
+        const right = bounds.x + bounds.w
+        const bottom = bounds.y + bounds.h
+        const marqueeRight = marquee.x + marquee.w
+        const marqueeBottom = marquee.y + marquee.h
+        return bounds.x >= marquee.x && bounds.y >= marquee.y && right <= marqueeRight && bottom <= marqueeBottom
+      },
+      initStore() {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw)
+            if (parsed && Array.isArray(parsed.schemas)) {
+              this.store = {
+                version: SCHEMA_VERSION,
+                activeSchemaId: parsed.activeSchemaId || null,
+                schemas: parsed.schemas.map((schema) => ({
+                  id: schema.id || uid('schema'),
+                  name: schema.name || 'Untitled',
+                  createdAt: typeof schema.createdAt === 'number' ? schema.createdAt : Date.now(),
+                  updatedAt: typeof schema.updatedAt === 'number' ? schema.updatedAt : Date.now(),
+                  elements: Array.isArray(schema.elements) ? schema.elements : []
+                }))
+              }
+            }
+          } catch (error) {
+            this.showToast('Invalid local store detected, resetting it.', 'error')
+          }
+        }
+
+        if (this.store.schemas.length === 0) {
+          this.store.schemas.push(this.makeEmptySchema('First diagram'))
+        }
+
+        if (!this.store.schemas.some((schema) => schema.id === this.store.activeSchemaId)) {
+          this.store.activeSchemaId = this.store.schemas[0].id
+        }
+
+        this.activeSchemaId = this.store.activeSchemaId
+        this.persistStore()
+      },
+      makeEmptySchema(name) {
+        const now = Date.now()
+        return {
+          id: uid('schema'),
+          name,
+          createdAt: now,
+          updatedAt: now,
+          elements: []
+        }
+      },
+      persistStore() {
+        this.store.activeSchemaId = this.activeSchemaId
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.store))
+      },
+      markDirty() {
+        this.isDirty = true
+        clearTimeout(this.autosaveTimer)
+        this.autosaveTimer = setTimeout(() => {
+          this.saveCurrentSchema(false)
+        }, 450)
+      },
+      saveCurrentSchema(showToast = true) {
+        if (!this.activeSchema) {
+          return
+        }
+        this.activeSchema.updatedAt = Date.now()
+        this.isDirty = false
+        this.persistStore()
+        if (showToast) {
+          this.showToast('Diagram saved.')
+        }
+      },
+      createSchema() {
+        if (this.isDirty) {
+          this.saveCurrentSchema(false)
+        }
+        const name = `Diagram ${this.store.schemas.length + 1}`
+        const schema = this.makeEmptySchema(name)
+        this.store.schemas.push(schema)
+        this.activeSchemaId = schema.id
+        this.clearSelection()
+        this.isDirty = false
+        this.persistStore()
+        this.renderCanvas()
+      },
+      activateSchema(schemaId) {
+        if (schemaId === this.activeSchemaId) {
+          return
+        }
+        if (this.isDirty) {
+          this.saveCurrentSchema(false)
+        }
+        this.activeSchemaId = schemaId
+        this.clearSelection()
+        this.isDirty = false
+        this.persistStore()
+        this.renderCanvas()
+      },
+      startRename(schema) {
+        this.renamingSchemaId = schema.id
+        this.renameDraft = schema.name
+      },
+      commitRename(schemaId) {
+        const schema = this.store.schemas.find((item) => item.id === schemaId)
+        if (!schema) {
+          this.renamingSchemaId = null
+          return
+        }
+        const nextName = this.renameDraft.trim()
+        if (nextName) {
+          schema.name = nextName
+          schema.updatedAt = Date.now()
+          this.persistStore()
+        }
+        this.renamingSchemaId = null
+      },
+      deleteSchema(schemaId) {
+        const schema = this.store.schemas.find((item) => item.id === schemaId)
+        if (!schema) {
+          return
+        }
+        if (!confirm(`Delete "${schema.name}"?`)) {
+          return
+        }
+        this.store.schemas = this.store.schemas.filter((item) => item.id !== schemaId)
+        if (this.store.schemas.length === 0) {
+          this.store.schemas.push(this.makeEmptySchema('First diagram'))
+        }
+        if (this.activeSchemaId === schemaId) {
+          this.activeSchemaId = this.store.schemas[0].id
+          this.clearSelection()
+        }
+        this.isDirty = false
+        this.persistStore()
+        this.renderCanvas()
+      },
+      openImportPicker() {
+        this.$refs.importInput.value = ''
+        this.$refs.importInput.click()
+      },
+      async onImportFileChange(event) {
+        const file = event.target.files && event.target.files[0]
+        if (!file) {
+          return
+        }
+        try {
+          const content = await file.text()
+          const imported = JSON.parse(content)
+          this.importSchemaObject(imported)
+        } catch (error) {
+          this.showToast('JSON import failed.', 'error')
+        }
+      },
+      importSchemaObject(payload) {
+        if (!payload || payload.schemaVersion !== SCHEMA_VERSION || !Array.isArray(payload.elements)) {
+          this.showToast('Invalid JSON format or unsupported version.', 'error')
+          return
+        }
+        if (this.isDirty) {
+          this.saveCurrentSchema(false)
+        }
+        const schema = this.makeEmptySchema(payload.name || `Import ${new Date().toLocaleString('en-GB')}`)
+        schema.elements = payload.elements.map((element) => ({ ...element, id: element.id || uid('el') }))
+        schema.updatedAt = Date.now()
+        this.store.schemas.push(schema)
+        this.activeSchemaId = schema.id
+        this.clearSelection()
+        this.isDirty = false
+        this.persistStore()
+        this.renderCanvas()
+        this.showToast('Diagram imported.')
+      },
+      exportCurrentSchema() {
+        if (!this.activeSchema) {
+          return
+        }
+        const payload = {
+          schemaVersion: SCHEMA_VERSION,
+          exportedAt: Date.now(),
+          name: this.activeSchema.name,
+          elements: this.activeSchema.elements
+        }
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        const safeName = this.activeSchema.name.replace(/[^a-z0-9-_]/gi, '_').toLowerCase()
+        anchor.href = url
+        anchor.download = `${safeName || 'schema'}.json`
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        URL.revokeObjectURL(url)
+        this.showToast('JSON export completed.')
+      },
+      computeElementsBounds(elements, ctx) {
+        if (!elements || elements.length === 0) {
+          return null
+        }
+        let minX = Infinity
+        let minY = Infinity
+        let maxX = -Infinity
+        let maxY = -Infinity
+        elements.forEach((element) => {
+          const b = this.getElementBounds(element, ctx)
+          if (!b) {
+            return
+          }
+          minX = Math.min(minX, b.x)
+          minY = Math.min(minY, b.y)
+          maxX = Math.max(maxX, b.x + b.w)
+          maxY = Math.max(maxY, b.y + b.h)
+        })
+        if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+          return null
+        }
+        return {
+          x: minX,
+          y: minY,
+          w: Math.max(1, maxX - minX),
+          h: Math.max(1, maxY - minY)
+        }
+      },
+      async buildCroppedSchemaPngBlob() {
+        if (!this.activeSchema || this.activeSchema.elements.length === 0) {
+          this.showToast('Nothing to export: diagram is empty.', 'error')
+          return null
+        }
+        const margin = 5
+        const measureCanvas = document.createElement('canvas')
+        const measureCtx = measureCanvas.getContext('2d')
+        const bounds = this.computeElementsBounds(this.activeSchema.elements, measureCtx)
+        if (!bounds) {
+          this.showToast('Could not compute diagram bounds.', 'error')
+          return null
+        }
+
+        const exportWidth = Math.ceil(bounds.w + (margin * 2))
+        const exportHeight = Math.ceil(bounds.h + (margin * 2))
+        const dpr = window.devicePixelRatio || 1
+
+        const outCanvas = document.createElement('canvas')
+        outCanvas.width = Math.max(1, Math.floor(exportWidth * dpr))
+        outCanvas.height = Math.max(1, Math.floor(exportHeight * dpr))
+        const outCtx = outCanvas.getContext('2d')
+
+        outCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        outCtx.clearRect(0, 0, exportWidth, exportHeight)
+        outCtx.fillStyle = '#ffffff'
+        outCtx.fillRect(0, 0, exportWidth, exportHeight)
+        outCtx.translate(margin - bounds.x, margin - bounds.y)
+
+        this.activeSchema.elements.forEach((element) => {
+          this.drawElement(outCtx, element, false)
+        })
+
+        return await new Promise((resolve) => {
+          outCanvas.toBlob((blob) => resolve(blob), 'image/png')
+        })
+      },
+      async saveCurrentSchemaAsPng() {
+        const blob = await this.buildCroppedSchemaPngBlob()
+        if (!blob) {
+          return
+        }
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        const safeName = this.activeSchema.name.replace(/[^a-z0-9-_]/gi, '_').toLowerCase()
+        anchor.href = url
+        anchor.download = `${safeName || 'diagram'}.png`
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        URL.revokeObjectURL(url)
+        this.showToast('PNG downloaded.')
+      },
+      async copySchemaPngToClipboard() {
+        if (!navigator.clipboard || !window.ClipboardItem) {
+          this.showToast('Clipboard image API is not available in this browser.', 'error')
+          return
+        }
+        const blob = await this.buildCroppedSchemaPngBlob()
+        if (!blob) {
+          return
+        }
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+          this.showToast('PNG copied to clipboard.')
+        } catch (error) {
+          this.showToast('Clipboard copy failed (permission may be denied).', 'error')
+        }
+      },
+      getPointerPosition(event) {
+        const canvas = this.$refs.canvas
+        const rect = canvas.getBoundingClientRect()
+        return {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top
+        }
+      },
+      onPointerDown(event) {
+        const canvas = this.$refs.canvas
+        canvas.focus()
+        const pos = this.getPointerPosition(event)
+        this.pointerState.pointerId = event.pointerId
+
+        if (this.activeTool === 'text') {
+          const text = prompt('Text:')
+          if (text && text.trim()) {
+            this.activeSchema.elements.push({
+              id: uid('el'),
+              type: 'text',
+              x: pos.x,
+              y: pos.y,
+              text: text.trim(),
+              color: this.activeColor,
+              fontSize: 18
+            })
+            this.setSingleSelection(this.activeSchema.elements[this.activeSchema.elements.length - 1].id)
+            this.markDirty()
+            this.renderCanvas()
+          }
+          return
+        }
+
+        if (this.activeTool === 'select') {
+          const resizeTarget = this.hitResizeHandle(pos.x, pos.y)
+          if (resizeTarget) {
+            this.setSingleSelection(resizeTarget.element.id)
+            this.pointerState.mode = 'resize'
+            this.pointerState.startX = pos.x
+            this.pointerState.startY = pos.y
+            this.pointerState.startElement = deepClone(resizeTarget.element)
+            this.pointerState.startElements = null
+            this.pointerState.resizeHandle = resizeTarget.handle
+            this.renderCanvas()
+            return
+          }
+
+          const hit = this.hitTest(pos.x, pos.y)
+          if (hit) {
+            if (!this.isElementSelected(hit.id)) {
+              this.setSingleSelection(hit.id)
+            }
+            this.pointerState.mode = 'drag'
+            this.pointerState.startX = pos.x
+            this.pointerState.startY = pos.y
+            this.pointerState.startElement = null
+            this.pointerState.startElements = this.activeSchema.elements
+              .filter((element) => this.isElementSelected(element.id))
+              .reduce((acc, element) => {
+                acc[element.id] = deepClone(element)
+                return acc
+              }, {})
+            this.pointerState.resizeHandle = null
+          } else {
+            this.clearSelection()
+            this.pointerState.mode = 'marquee'
+            this.pointerState.startX = pos.x
+            this.pointerState.startY = pos.y
+            this.pointerState.startElement = null
+            this.pointerState.startElements = null
+            this.pointerState.resizeHandle = null
+            this.marqueeRect = { x: pos.x, y: pos.y, w: 0, h: 0 }
+          }
+          this.renderCanvas()
+          return
+        }
+
+        const base = {
+          id: uid('el'),
+          stroke: this.activeColor,
+          fill: hexToRgba(this.activeColor, 0.22),
+          strokeWidth: 2
+        }
+
+        if (this.activeTool === 'rect' || this.activeTool === 'ellipse') {
+          this.draftElement = {
+            ...base,
+            type: this.activeTool,
+            x: pos.x,
+            y: pos.y,
+            w: 0,
+            h: 0
+          }
+          this.pointerState.mode = 'draw'
+          this.pointerState.startX = pos.x
+          this.pointerState.startY = pos.y
+          this.renderCanvas()
+          return
+        }
+
+        if (this.activeTool === 'arrow') {
+          this.draftElement = {
+            ...base,
+            type: 'arrow',
+            x1: pos.x,
+            y1: pos.y,
+            x2: pos.x,
+            y2: pos.y
+          }
+          this.pointerState.mode = 'draw'
+          this.renderCanvas()
+        }
+      },
+      onPointerMove(event) {
+        if (!this.pointerState.pointerId || event.pointerId !== this.pointerState.pointerId) {
+          return
+        }
+        const pos = this.getPointerPosition(event)
+
+        if (this.pointerState.mode === 'drag' && this.selectedElementIds.length > 0) {
+          if (!this.pointerState.startElements) {
+            return
+          }
+          const dx = pos.x - this.pointerState.startX
+          const dy = pos.y - this.pointerState.startY
+          this.selectedElementIds.forEach((elementId) => {
+            const target = this.activeSchema.elements.find((element) => element.id === elementId)
+            const startElement = this.pointerState.startElements[elementId]
+            if (!target || !startElement) {
+              return
+            }
+            if (target.type === 'arrow') {
+              target.x1 = startElement.x1 + dx
+              target.y1 = startElement.y1 + dy
+              target.x2 = startElement.x2 + dx
+              target.y2 = startElement.y2 + dy
+            } else {
+              target.x = startElement.x + dx
+              target.y = startElement.y + dy
+            }
+          })
+          this.markDirty()
+          this.renderCanvas()
+          return
+        }
+
+        if (this.pointerState.mode === 'resize' && this.selectedElementIds.length === 1) {
+          const target = this.activeSchema.elements.find((element) => element.id === this.selectedElementIds[0])
+          if (!target || !this.pointerState.startElement || !this.pointerState.resizeHandle) {
+            return
+          }
+          if (target.type !== 'rect' && target.type !== 'ellipse') {
+            return
+          }
+          this.applyResize(target, this.pointerState.startElement, this.pointerState.resizeHandle, pos.x, pos.y)
+          this.markDirty()
+          this.renderCanvas()
+          return
+        }
+
+        if (this.pointerState.mode === 'marquee') {
+          const left = Math.min(this.pointerState.startX, pos.x)
+          const top = Math.min(this.pointerState.startY, pos.y)
+          const width = Math.abs(pos.x - this.pointerState.startX)
+          const height = Math.abs(pos.y - this.pointerState.startY)
+          this.marqueeRect = { x: left, y: top, w: width, h: height }
+          const ctx = this.getCanvasContext()
+          this.selectedElementIds = this.activeSchema.elements
+            .filter((element) => this.isBoundsInsideMarquee(this.getElementBounds(element, ctx), this.marqueeRect))
+            .map((element) => element.id)
+          this.renderCanvas()
+          return
+        }
+
+        if (this.pointerState.mode === 'draw' && this.draftElement) {
+          if (this.draftElement.type === 'arrow') {
+            this.draftElement.x2 = pos.x
+            this.draftElement.y2 = pos.y
+          } else {
+            this.draftElement.w = pos.x - this.pointerState.startX
+            this.draftElement.h = pos.y - this.pointerState.startY
+          }
+          this.renderCanvas()
+        }
+      },
+      onPointerUp(event) {
+        if (this.pointerState.pointerId && event.pointerId !== this.pointerState.pointerId) {
+          return
+        }
+        if (this.pointerState.mode === 'draw' && this.draftElement) {
+          const element = this.draftElement
+          let shouldAdd = true
+          if (element.type === 'arrow') {
+            shouldAdd = Math.hypot(element.x2 - element.x1, element.y2 - element.y1) > 5
+          } else {
+            const rect = normalizeRect(element)
+            shouldAdd = rect.w > 6 && rect.h > 6
+          }
+          if (shouldAdd) {
+            this.activeSchema.elements.push(element)
+            this.setSingleSelection(element.id)
+            this.markDirty()
+          }
+        }
+
+        this.draftElement = null
+        this.marqueeRect = null
+        this.pointerState.mode = null
+        this.pointerState.pointerId = null
+        this.pointerState.startElement = null
+        this.pointerState.startElements = null
+        this.pointerState.resizeHandle = null
+        this.renderCanvas()
+      },
+      getResizeHandles(element) {
+        if (!element || (element.type !== 'rect' && element.type !== 'ellipse')) {
+          return []
+        }
+        const r = normalizeRect(element)
+        const right = r.x + r.w
+        const bottom = r.y + r.h
+        const midX = r.x + (r.w / 2)
+        const midY = r.y + (r.h / 2)
+        return [
+          { key: 'nw', x: r.x, y: r.y, cursor: 'nwse-resize' },
+          { key: 'n', x: midX, y: r.y, cursor: 'ns-resize' },
+          { key: 'ne', x: right, y: r.y, cursor: 'nesw-resize' },
+          { key: 'e', x: right, y: midY, cursor: 'ew-resize' },
+          { key: 'se', x: right, y: bottom, cursor: 'nwse-resize' },
+          { key: 's', x: midX, y: bottom, cursor: 'ns-resize' },
+          { key: 'sw', x: r.x, y: bottom, cursor: 'nesw-resize' },
+          { key: 'w', x: r.x, y: midY, cursor: 'ew-resize' }
+        ]
+      },
+      hitResizeHandle(x, y) {
+        if (!this.activeSchema || this.selectedElementIds.length !== 1) {
+          return null
+        }
+        const element = this.activeSchema.elements.find((item) => item.id === this.selectedElementIds[0])
+        if (!element || (element.type !== 'rect' && element.type !== 'ellipse')) {
+          return null
+        }
+        const handles = this.getResizeHandles(element)
+        const radius = 7
+        for (let i = 0; i < handles.length; i += 1) {
+          const handle = handles[i]
+          if (Math.hypot(x - handle.x, y - handle.y) <= radius) {
+            return { element, handle: handle.key }
+          }
+        }
+        return null
+      },
+      applyResize(target, startElement, handle, pointerX, pointerY) {
+        const minSize = 12
+        const start = normalizeRect(startElement)
+        let left = start.x
+        let top = start.y
+        let right = start.x + start.w
+        let bottom = start.y + start.h
+
+        if (handle.includes('n')) {
+          top = Math.min(pointerY, bottom - minSize)
+        }
+        if (handle.includes('s')) {
+          bottom = Math.max(pointerY, top + minSize)
+        }
+        if (handle.includes('w')) {
+          left = Math.min(pointerX, right - minSize)
+        }
+        if (handle.includes('e')) {
+          right = Math.max(pointerX, left + minSize)
+        }
+
+        target.x = left
+        target.y = top
+        target.w = right - left
+        target.h = bottom - top
+      },
+      hitTest(x, y) {
+        const ctx = this.getCanvasContext()
+        if (!ctx || !this.activeSchema) {
+          return null
+        }
+
+        for (let i = this.activeSchema.elements.length - 1; i >= 0; i -= 1) {
+          const element = this.activeSchema.elements[i]
+          if (element.type === 'rect') {
+            const r = normalizeRect(element)
+            ctx.save()
+            ctx.beginPath()
+            ctx.rect(r.x, r.y, r.w, r.h)
+            ctx.lineWidth = 10
+            const isHit = ctx.isPointInStroke(x, y)
+            ctx.restore()
+            if (isHit) {
+              return element
+            }
+          }
+          if (element.type === 'ellipse') {
+            const r = normalizeRect(element)
+            const rx = r.w / 2
+            const ry = r.h / 2
+            if (rx > 0 && ry > 0) {
+              ctx.save()
+              ctx.beginPath()
+              ctx.ellipse(r.x + rx, r.y + ry, rx, ry, 0, 0, Math.PI * 2)
+              ctx.lineWidth = 10
+              const isHit = ctx.isPointInStroke(x, y)
+              ctx.restore()
+              if (isHit) {
+                return element
+              }
+            }
+          }
+          if (element.type === 'arrow') {
+            const distance = pointToSegmentDistance(x, y, element.x1, element.y1, element.x2, element.y2)
+            if (distance <= 8) {
+              return element
+            }
+          }
+          if (element.type === 'text') {
+            ctx.font = `${element.fontSize || 18}px Space Grotesk`
+            const width = ctx.measureText(element.text || '').width
+            const height = element.fontSize || 18
+            if (x >= element.x && x <= element.x + width && y <= element.y && y >= element.y - height) {
+              return element
+            }
+          }
+        }
+        return null
+      },
+      drawElement(ctx, element, selected = false) {
+        ctx.save()
+        ctx.strokeStyle = element.stroke || '#1f2d54'
+        ctx.fillStyle = element.fill || '#8ea9ff22'
+        ctx.lineWidth = element.strokeWidth || 2
+
+        if (element.type === 'rect') {
+          const r = normalizeRect(element)
+          ctx.fillRect(r.x, r.y, r.w, r.h)
+          ctx.strokeRect(r.x, r.y, r.w, r.h)
+          if (selected) {
+            this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
+          }
+        }
+
+        if (element.type === 'ellipse') {
+          const r = normalizeRect(element)
+          ctx.beginPath()
+          ctx.ellipse(r.x + (r.w / 2), r.y + (r.h / 2), r.w / 2, r.h / 2, 0, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.stroke()
+          if (selected) {
+            this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
+          }
+        }
+
+        if (element.type === 'arrow') {
+          ctx.beginPath()
+          ctx.moveTo(element.x1, element.y1)
+          ctx.lineTo(element.x2, element.y2)
+          ctx.stroke()
+
+          const angle = Math.atan2(element.y2 - element.y1, element.x2 - element.x1)
+          const size = 12
+          ctx.beginPath()
+          ctx.moveTo(element.x2, element.y2)
+          ctx.lineTo(element.x2 - size * Math.cos(angle - Math.PI / 6), element.y2 - size * Math.sin(angle - Math.PI / 6))
+          ctx.lineTo(element.x2 - size * Math.cos(angle + Math.PI / 6), element.y2 - size * Math.sin(angle + Math.PI / 6))
+          ctx.closePath()
+          ctx.fillStyle = element.stroke || '#1f2d54'
+          ctx.fill()
+
+          if (selected) {
+            const minX = Math.min(element.x1, element.x2)
+            const minY = Math.min(element.y1, element.y2)
+            const w = Math.abs(element.x2 - element.x1)
+            const h = Math.abs(element.y2 - element.y1)
+            this.drawSelectionRect(ctx, minX, minY, w, h)
+          }
+        }
+
+        if (element.type === 'text') {
+          ctx.font = `${element.fontSize || 18}px Space Grotesk`
+          ctx.fillStyle = element.color || '#17233f'
+          ctx.textBaseline = 'alphabetic'
+          ctx.fillText(element.text || '', element.x, element.y)
+          if (selected) {
+            const width = ctx.measureText(element.text || '').width
+            const height = element.fontSize || 18
+            this.drawSelectionRect(ctx, element.x, element.y - height, width, height)
+          }
+        }
+
+        ctx.restore()
+      },
+      drawSelectionRect(ctx, x, y, w, h) {
+        ctx.save()
+        ctx.strokeStyle = '#ff5f2a'
+        ctx.lineWidth = 1
+        ctx.setLineDash([6, 4])
+        ctx.strokeRect(x - 4, y - 4, w + 8, h + 8)
+        ctx.restore()
+      },
+      drawResizeHandles(ctx, element) {
+        const handles = this.getResizeHandles(element)
+        if (handles.length === 0) {
+          return
+        }
+        ctx.save()
+        ctx.fillStyle = '#ffffff'
+        ctx.strokeStyle = '#ff5f2a'
+        ctx.lineWidth = 1.5
+        handles.forEach((handle) => {
+          ctx.beginPath()
+          ctx.rect(handle.x - 4, handle.y - 4, 8, 8)
+          ctx.fill()
+          ctx.stroke()
+        })
+        ctx.restore()
+      },
+      renderCanvas() {
+        const canvas = this.$refs.canvas
+        const ctx = this.getCanvasContext()
+        if (!canvas || !ctx) {
+          return
+        }
+
+        const rect = canvas.getBoundingClientRect()
+        const dpr = window.devicePixelRatio || 1
+        const width = Math.max(300, Math.floor(rect.width))
+        const height = Math.max(250, Math.floor(rect.height))
+        canvas.width = Math.floor(width * dpr)
+        canvas.height = Math.floor(height * dpr)
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        ctx.clearRect(0, 0, width, height)
+
+        ctx.fillStyle = '#f8fbff'
+        ctx.fillRect(0, 0, width, height)
+        ctx.strokeStyle = '#e9eef8'
+        ctx.lineWidth = 1
+
+        for (let x = 20; x < width; x += 20) {
+          ctx.beginPath()
+          ctx.moveTo(x, 0)
+          ctx.lineTo(x, height)
+          ctx.stroke()
+        }
+        for (let y = 20; y < height; y += 20) {
+          ctx.beginPath()
+          ctx.moveTo(0, y)
+          ctx.lineTo(width, y)
+          ctx.stroke()
+        }
+
+        if (this.activeSchema) {
+          this.activeSchema.elements.forEach((element) => {
+            this.drawElement(ctx, element, this.isElementSelected(element.id))
+            if (this.selectedElementIds.length === 1 && this.isElementSelected(element.id) && (element.type === 'rect' || element.type === 'ellipse')) {
+              this.drawResizeHandles(ctx, element)
+            }
+          })
+        }
+
+        if (this.draftElement) {
+          this.drawElement(ctx, this.draftElement, false)
+        }
+
+        if (this.marqueeRect) {
+          ctx.save()
+          ctx.fillStyle = '#2c79f226'
+          ctx.strokeStyle = '#2c79f2'
+          ctx.lineWidth = 1
+          ctx.setLineDash([5, 4])
+          ctx.fillRect(this.marqueeRect.x, this.marqueeRect.y, this.marqueeRect.w, this.marqueeRect.h)
+          ctx.strokeRect(this.marqueeRect.x, this.marqueeRect.y, this.marqueeRect.w, this.marqueeRect.h)
+          ctx.restore()
+        }
+      },
+      deleteSelectedElement() {
+        if (!this.activeSchema || this.selectedElementIds.length === 0) {
+          return
+        }
+        const before = this.activeSchema.elements.length
+        this.activeSchema.elements = this.activeSchema.elements.filter((element) => !this.selectedElementIds.includes(element.id))
+        if (this.activeSchema.elements.length !== before) {
+          this.clearSelection()
+          this.markDirty()
+          this.renderCanvas()
+        }
+      },
+      onGlobalKeyDown(event) {
+        const target = event.target
+        const targetTag = target && target.tagName ? target.tagName.toLowerCase() : ''
+        const isEditable = targetTag === 'input' || targetTag === 'textarea' || (target && target.isContentEditable)
+        if (isEditable) {
+          return
+        }
+
+        const key = event.key.toLowerCase()
+        if ((event.ctrlKey || event.metaKey) && key === 's') {
+          event.preventDefault()
+          this.saveCurrentSchema()
+          return
+        }
+
+        if (key === 'delete' || key === 'backspace') {
+          event.preventDefault()
+          this.deleteSelectedElement()
+          return
+        }
+
+        const map = {
+          s: 'select',
+          r: 'rect',
+          e: 'ellipse',
+          a: 'arrow',
+          t: 'text'
+        }
+        if (map[key]) {
+          this.activeTool = map[key]
+        }
+      },
+      formatDate(timestamp) {
+        return new Date(timestamp).toLocaleString('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+          day: '2-digit',
+          month: '2-digit'
+        })
+      },
+      showToast(message, type = 'info') {
+        this.toast.message = message
+        this.toast.type = type
+        setTimeout(() => {
+          if (this.toast.message === message) {
+            this.toast.message = ''
+          }
+        }, 2200)
+      }
+    },
+    mounted() {
+      this.initStore()
+      this.$nextTick(() => {
+        this.renderCanvas()
+      })
+      window.addEventListener('resize', this.renderCanvas)
+      window.addEventListener('keydown', this.onGlobalKeyDown)
+    },
+    beforeUnmount() {
+      clearTimeout(this.autosaveTimer)
+      window.removeEventListener('resize', this.renderCanvas)
+      window.removeEventListener('keydown', this.onGlobalKeyDown)
+      if (this.isDirty) {
+        this.saveCurrentSchema(false)
+      }
+    }
+  }).mount('#app')
+</script>
+
+<style scoped>
+:root {
+  --ink: #17233f;
+  --ink-soft: #4d5f89;
+  --line: #dce5f5;
+  --surface: #ffffff;
+  --surface-alt: #f2f6ff;
+  --brand: #0c6cf2;
+  --brand-soft: #d9e8ff;
+  --warn: #c7411d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  font-family: 'Space Grotesk', sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 12% 10%, #d8e5ff 0%, transparent 40%),
+    radial-gradient(circle at 88% 90%, #ffe6d3 0%, transparent 38%),
+    linear-gradient(130deg, #f4f8ff, #eef6ff 60%, #fff6ef);
+}
+
+#app.container {
+  width: 100vw;
+  max-width: none;
+  margin: 0;
+  min-height: 100vh;
+}
+
+.board-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: color-mix(in srgb, var(--surface), white 15%);
+  border: 1px solid #e2e9f8;
+  border-radius: 0;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(100deg, #ffffff, #f6f9ff 50%, #fff7f0);
+}
+
+.brand h1 {
+  margin: 0;
+  font-family: 'Sora', sans-serif;
+  font-size: 1.25rem;
+  letter-spacing: 0.01em;
+}
+
+.brand p {
+  margin: 2px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.top-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.main-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr 280px;
+  flex: 1;
+  min-height: 0;
+}
+
+.tool-panel,
+.schema-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, #fcfdff, #f5f9ff);
+}
+
+.schema-panel {
+  border-right: none;
+  border-left: 1px solid var(--line);
+  background: linear-gradient(180deg, #fffdfb, #fff7f1);
+}
+
+.panel-title {
+  margin: 0 0 10px;
+  font-family: 'Sora', sans-serif;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+}
+
+.tool-btn {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  margin-bottom: 8px;
+  border-radius: 10px;
+  padding: 9px 10px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: 0.15s ease;
+}
+
+.tool-btn span {
+  color: var(--ink-soft);
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+.tool-btn strong {
+  font-size: 0.93rem;
+}
+
+.tool-btn:hover {
+  transform: translateY(-1px);
+  border-color: #b6c8ee;
+}
+
+.tool-btn.active {
+  border-color: #9db9f5;
+  background: var(--brand-soft);
+  color: #12305f;
+}
+
+.tool-hint {
+  margin-top: 14px;
+  border: 1px dashed #c8d6f2;
+  border-radius: 10px;
+  padding: 10px;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.color-palette {
+  margin-top: 10px;
+  padding-top: 12px;
+}
+
+.palette-title {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.color-swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid #c3d1ed;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.color-swatch:hover {
+  transform: translateY(-1px);
+}
+
+.color-swatch.active {
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #275ca8;
+}
+
+.canvas-wrap {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+
+.canvas-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #fefeff;
+  font-size: 0.9rem;
+}
+
+.save-state {
+  color: #2c4f8b;
+  font-weight: 600;
+}
+
+.save-state.dirty {
+  color: var(--warn);
+}
+
+.canvas-zone {
+  padding: 12px;
+  min-height: 0;
+}
+
+.drawing-canvas {
+  width: 100%;
+  height: 100%;
+  border: 1px solid #cddbf6;
+  border-radius: 14px;
+  background: #f9fbff;
+  outline: none;
+  display: block;
+}
+
+.schema-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schema-item {
+  border: 1px solid #ecdccf;
+  border-radius: 10px;
+  background: #fffdfb;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.schema-item.active {
+  border-color: #f1be9a;
+  background: #fff3ea;
+}
+
+.schema-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.schema-row strong {
+  font-size: 0.9rem;
+}
+
+.schema-row span {
+  color: #7f6c5e;
+  font-size: 0.75rem;
+}
+
+.schema-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+
+.save-btn,
+.png-save-btn,
+.png-clip-btn,
+.ghost-btn,
+.danger-btn {
+  border-radius: 8px;
+}
+
+.png-save-btn {
+  background: #2f9d54;
+  color: white;
+  border: none;
+}
+
+.png-save-btn:hover {
+  color: white;
+  background: #268246;
+}
+
+.png-clip-btn {
+  background: #e9edf4;
+  border: 1px solid #c8d0de;
+  color: #30415e;
+}
+
+.save-btn {
+  background: #1165da;
+  color: white;
+  border: none;
+}
+
+.save-btn:hover {
+  color: white;
+  background: #0d58bc;
+}
+
+.ghost-btn {
+  background: #f7f9ff;
+  border: 1px solid #c7d6f6;
+}
+
+.danger-btn {
+  background: #fff3ef;
+  border: 1px solid #f3c2b7;
+  color: #973622;
+}
+
+.toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: white;
+  background: #235fc0;
+  box-shadow: 0 8px 24px #1635602e;
+  z-index: 20;
+}
+
+.toast.error {
+  background: #9b3724;
+}
+
+@media (max-width: 1080px) {
+  .main-grid {
+    grid-template-columns: 190px 1fr;
+  }
+
+  .schema-panel {
+    grid-column: 1 / -1;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+
+}
+
+@media (max-width: 720px) {
+  #app.container {
+    width: 100vw;
+    margin: 0;
+  }
+
+  .top-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-panel,
+  .schema-panel {
+    border: none;
+    border-top: 1px solid var(--line);
+  }
+
+  .tool-panel {
+    order: 2;
+  }
+
+  .canvas-wrap {
+    order: 1;
+  }
+
+  .schema-panel {
+    order: 3;
+  }
+
+}
+
+
+</style>
+
+</html>
