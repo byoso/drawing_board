@@ -123,7 +123,7 @@
           </p>
           <div class="zoom-tools">
             <p class="zoom-state">Zoom: {{ zoomPercent }}%</p>
-            <button class="zoom-reset-btn" aria-label="Reset zoom to 100%" @click="resetZoomView">
+            <button class="button zoom-reset-btn" aria-label="Reset zoom to 100%" @click="resetZoomView">
               &#128269;
             </button>
           </div>
@@ -247,16 +247,15 @@
 
             <div class="icon-list" v-if="!iconSet.collapsed && iconSet.icons.length">
               <div
-                v-for="icon in iconSet.icons"
+                v-for="icon in getSortedIcons(iconSet)"
                 :key="icon.id"
                 class="icon-thumb"
                 draggable="true"
                 @dragstart="onIconDragStart(iconSet.id, icon.id, $event)"
               >
-                <img :src="icon.src" :alt="icon.name" />
+                <img :src="icon.src" :alt="icon.name || 'icon'" :title="icon.name || 'icon'" />
                 <div class="icon-thumb-meta">
-                  <span>{{ icon.name }}</span>
-                  <button class="button is-small danger-btn mini-btn" @click.stop="deleteIcon(iconSet.id, icon.id)">Delete</button>
+                  <button class="button is-small ghost-btn mini-btn" @click.stop="openIconEditor(iconSet.id, icon.id)">Edit</button>
                 </div>
               </div>
             </div>
@@ -288,6 +287,35 @@
       accept="application/json,.json"
       @change="onIconSetImportFileChange"
     >
+
+    <div class="modal" :class="{ 'is-active': iconEditor.isOpen }">
+      <div class="modal-background" @click="closeIconEditor"></div>
+      <div class="modal-card icon-editor-modal">
+        <header class="modal-card-head">
+          <p class="modal-card-title">Edit icon</p>
+          <button class="delete" aria-label="close" @click="closeIconEditor"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="field">
+            <label class="label">Name</label>
+            <div class="control">
+              <input class="input" type="text" v-model="iconEditor.name" maxlength="120" placeholder="Icon name">
+            </div>
+          </div>
+          <div class="field">
+            <label class="label">Image URL</label>
+            <div class="control">
+              <input class="input" type="url" v-model="iconEditor.src" placeholder="https://..." @keydown.enter.prevent="saveIconEditor">
+            </div>
+          </div>
+        </section>
+        <footer class="modal-card-foot icon-editor-actions">
+          <button class="button save-btn" @click="saveIconEditor">Save</button>
+          <button class="button danger-btn" @click="deleteIconFromEditor">Delete icon</button>
+          <button class="button ghost-btn" @click="closeIconEditor">Cancel</button>
+        </footer>
+      </div>
+    </div>
 
     <div v-if="toast.message" class="toast" :class="toast.type">
       {{ toast.message }}
@@ -424,6 +452,13 @@
         isDiagramsCollapsed: false,
         isIconSetsCollapsed: false,
         isSpacePressed: false,
+        iconEditor: {
+          isOpen: false,
+          iconSetId: null,
+          iconId: null,
+          name: '',
+          src: ''
+        },
         toast: {
           message: '',
           type: 'info'
@@ -539,13 +574,29 @@
           icons: Array.isArray(iconSet.icons)
             ? iconSet.icons.map((icon) => ({
                 id: icon.id || uid('icon'),
-                name: icon.name || 'Icon',
+                name: icon.name || 'icon',
                 src: icon.src || '',
                 width: typeof icon.width === 'number' ? icon.width : 128,
                 height: typeof icon.height === 'number' ? icon.height : 128
               })).filter((icon) => icon.src)
             : []
         }
+      },
+      getSortedIcons(iconSet) {
+        if (!iconSet || !Array.isArray(iconSet.icons)) {
+          return []
+        }
+        return [...iconSet.icons].sort((a, b) => {
+          const aName = (a.name || 'icon').toLowerCase()
+          const bName = (b.name || 'icon').toLowerCase()
+          if (aName < bName) {
+            return -1
+          }
+          if (aName > bName) {
+            return 1
+          }
+          return 0
+        })
       },
       fitSizeWithinLimit(width, height, limit = 128) {
         const safeWidth = Math.max(1, width || limit)
@@ -571,14 +622,27 @@
           return null
         }
         if (!this.iconImageCache[src]) {
+          const shouldTryAnonymousCors = /^https?:\/\//i.test(src) && !src.startsWith('data:')
           const image = new Image()
-          if (!src.startsWith('data:')) {
+          if (shouldTryAnonymousCors) {
             image.crossOrigin = 'anonymous'
           }
           image.onload = () => {
             this.renderCanvas()
           }
           image.onerror = () => {
+            if (shouldTryAnonymousCors) {
+              const fallbackImage = new Image()
+              fallbackImage.onload = () => {
+                this.renderCanvas()
+              }
+              fallbackImage.onerror = () => {
+                this.renderCanvas()
+              }
+              fallbackImage.src = src
+              this.iconImageCache[src] = fallbackImage
+              return
+            }
             this.renderCanvas()
           }
           image.src = src
@@ -703,9 +767,9 @@
         if (!src || !src.trim()) {
           return
         }
-        const name = prompt('Icon name:', 'Icon') || 'Icon'
+        const name = prompt('Icon name:', 'icon') || 'icon'
         await this.addIconToSet(iconSetId, {
-          name: name.trim() || 'Icon',
+          name: name.trim() || 'icon',
           src: src.trim()
         })
       },
@@ -719,14 +783,14 @@
           : await this.loadImageDimensions(iconData.src)
         iconSet.icons.push({
           id: uid('icon'),
-          name: iconData.name || 'Icon',
+          name: iconData.name || 'icon',
           src: iconData.src,
           width: dimensions.width,
           height: dimensions.height
         })
         this.persistStore()
       },
-      deleteIcon(iconSetId, iconId) {
+      openIconEditor(iconSetId, iconId) {
         const iconSet = this.iconSets.find((item) => item.id === iconSetId)
         if (!iconSet) {
           return
@@ -735,11 +799,85 @@
         if (!icon) {
           return
         }
-        if (!confirm(`Delete icon "${icon.name}"?`)) {
+        this.iconEditor = {
+          isOpen: true,
+          iconSetId,
+          iconId,
+          name: icon.name || 'icon',
+          src: icon.src || ''
+        }
+      },
+      closeIconEditor() {
+        this.iconEditor = {
+          isOpen: false,
+          iconSetId: null,
+          iconId: null,
+          name: '',
+          src: ''
+        }
+      },
+      async saveIconEditor() {
+        if (!this.iconEditor.isOpen || !this.iconEditor.iconSetId || !this.iconEditor.iconId) {
           return
         }
-        iconSet.icons = iconSet.icons.filter((icon) => icon.id !== iconId)
+        const iconSet = this.iconSets.find((item) => item.id === this.iconEditor.iconSetId)
+        if (!iconSet) {
+          this.closeIconEditor()
+          return
+        }
+        const icon = iconSet.icons.find((item) => item.id === this.iconEditor.iconId)
+        if (!icon) {
+          this.closeIconEditor()
+          return
+        }
+        const nextName = (this.iconEditor.name || '').trim() || 'icon'
+        const nextSrc = (this.iconEditor.src || '').trim()
+        if (!nextSrc) {
+          this.showToast('Icon URL is required.', 'error')
+          return
+        }
+
+        const previousSrc = icon.src || ''
+        icon.name = nextName
+        if (nextSrc !== previousSrc) {
+          const dimensions = await this.loadImageDimensions(nextSrc)
+          icon.src = nextSrc
+          icon.width = dimensions.width
+          icon.height = dimensions.height
+          delete this.iconImageCache[previousSrc]
+          delete this.iconImageCache[nextSrc]
+        }
+
         this.persistStore()
+        this.renderCanvas()
+        this.closeIconEditor()
+        this.showToast('Icon updated.')
+      },
+      deleteIcon(iconSetId, iconId, options = {}) {
+        const { confirmDelete = true } = options
+        const iconSet = this.iconSets.find((item) => item.id === iconSetId)
+        if (!iconSet) {
+          return
+        }
+        const icon = iconSet.icons.find((item) => item.id === iconId)
+        if (!icon) {
+          return
+        }
+        if (confirmDelete && !confirm(`Delete icon "${icon.name}"?`)) {
+          return
+        }
+        delete this.iconImageCache[icon.src || '']
+        iconSet.icons = iconSet.icons.filter((item) => item.id !== iconId)
+        this.persistStore()
+        this.renderCanvas()
+      },
+      deleteIconFromEditor() {
+        if (!this.iconEditor.isOpen || !this.iconEditor.iconSetId || !this.iconEditor.iconId) {
+          return
+        }
+        this.deleteIcon(this.iconEditor.iconSetId, this.iconEditor.iconId, { confirmDelete: false })
+        this.closeIconEditor()
+        this.showToast('Icon deleted.')
       },
       exportIconSet(iconSetId) {
         const iconSet = this.iconSets.find((item) => item.id === iconSetId)
@@ -781,7 +919,7 @@
           return
         }
         await this.addIconToSet(iconSetId, {
-          name: file.name.replace(/\.[^.]+$/, '') || 'Icon',
+          name: file.name.replace(/\.[^.]+$/, '') || 'icon',
           src: dataUrl
         })
       },
@@ -2465,6 +2603,21 @@ body {
 
 .header-actions {
   align-items: center;
+}
+
+
+.button {
+  border-radius: 8px;
+}
+
+.top-actions .button,
+.schema-actions .button,
+.icon-set-actions .button,
+.icon-thumb-meta .button,
+.modal-card-foot .button,
+.zoom-tools .button {
+  border-radius: 8px !important;
+  overflow: hidden;
 }
 
 .tool-btn {
