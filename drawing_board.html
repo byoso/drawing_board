@@ -140,8 +140,22 @@
       </main>
 
       <aside class="schema-panel">
-        <p class="panel-title">Diagrams</p>
-        <div class="schema-list">
+        <div
+          class="section-header-row collapse-row"
+          role="button"
+          tabindex="0"
+          :aria-expanded="String(!isDiagramsCollapsed)"
+          @click="isDiagramsCollapsed = !isDiagramsCollapsed"
+          @keydown.enter.prevent="isDiagramsCollapsed = !isDiagramsCollapsed"
+          @keydown.space.prevent="isDiagramsCollapsed = !isDiagramsCollapsed"
+        >
+          <p class="panel-title">Diagrams</p>
+          <span class="collapse-btn" aria-hidden="true">
+            <span v-if="isDiagramsCollapsed">&#9656;</span>
+            <span v-else>&#9662;</span>
+          </span>
+        </div>
+        <div class="schema-list" v-if="!isDiagramsCollapsed">
           <article
             v-for="schema in sortedSchemas"
             :key="schema.id"
@@ -171,27 +185,48 @@
           </article>
         </div>
 
-        <div class="icon-sets-header">
+        <div
+          class="icon-sets-header section-header-row collapse-row"
+          role="button"
+          tabindex="0"
+          :aria-expanded="String(!isIconSetsCollapsed)"
+          @click="isIconSetsCollapsed = !isIconSetsCollapsed"
+          @keydown.enter.prevent="isIconSetsCollapsed = !isIconSetsCollapsed"
+          @keydown.space.prevent="isIconSetsCollapsed = !isIconSetsCollapsed"
+        >
           <p class="panel-title">Icon sets</p>
+          <span class="collapse-btn" aria-hidden="true">
+            <span v-if="isIconSetsCollapsed">&#9656;</span>
+            <span v-else>&#9662;</span>
+          </span>
+        </div>
+
+        <div class="icon-set-list" v-if="!isIconSetsCollapsed">
           <div class="icon-set-actions">
             <button class="button is-small ghost-btn" @click="createIconSet">New set</button>
             <button class="button is-small ghost-btn" @click="openImportIconSetPicker">Import JSON</button>
           </div>
-        </div>
-
-        <div class="icon-set-list">
           <article
             v-for="iconSet in iconSets"
             :key="iconSet.id"
             class="icon-set-item"
           >
-            <div class="icon-set-row">
+            <div
+              class="icon-set-row collapse-row"
+              role="button"
+              tabindex="0"
+              :aria-expanded="String(!iconSet.collapsed)"
+              @click="toggleIconSetCollapsed(iconSet.id)"
+              @keydown.enter.prevent="toggleIconSetCollapsed(iconSet.id)"
+              @keydown.space.prevent="toggleIconSetCollapsed(iconSet.id)"
+            >
               <strong>{{ iconSet.name }}</strong>
               <div class="icon-set-row-meta">
                 <span>{{ iconSet.icons.length }} icons</span>
-                <button class="button is-small ghost-btn collapse-btn" @click.stop="toggleIconSetCollapsed(iconSet.id)">
-                  {{ iconSet.collapsed ? 'Show' : 'Hide' }}
-                </button>
+                <span class="collapse-btn" aria-hidden="true">
+                  <span v-if="iconSet.collapsed">&#9656;</span>
+                  <span v-else>&#9662;</span>
+                </span>
               </div>
             </div>
             <div class="icon-set-actions" v-if="!iconSet.collapsed">
@@ -372,6 +407,8 @@
         iconImageCache: {},
         renamingSchemaId: null,
         renameDraft: '',
+        isDiagramsCollapsed: false,
+        isIconSetsCollapsed: false,
         toast: {
           message: '',
           type: 'info'
@@ -2081,6 +2118,21 @@ body {
   letter-spacing: 0.02em;
 }
 
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.section-header-row .panel-title {
+  margin: 0;
+}
+
+.header-actions {
+  align-items: center;
+}
+
 .tool-btn {
   width: 100%;
   border: 1px solid var(--line);
@@ -2254,6 +2306,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-top: 10px;
 }
 
 .schema-item {
@@ -2333,8 +2386,35 @@ body {
 }
 
 .collapse-btn {
-  padding: 0.2rem 0.45rem;
-  height: auto;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #45608e;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.collapse-btn:hover {
+  color: #173b76;
+}
+
+.collapse-row {
+  cursor: pointer;
+  user-select: none;
+}
+
+.collapse-row:focus-visible {
+  outline: 2px solid #7ca3e9;
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .icon-set-actions {
