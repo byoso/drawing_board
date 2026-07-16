@@ -121,6 +121,12 @@
           <p class="save-state" :class="{ dirty: isDirty }">
             {{ isDirty ? 'Unsaved changes' : 'Saved' }}
           </p>
+          <div class="zoom-tools">
+            <p class="zoom-state">Zoom: {{ zoomPercent }}%</p>
+            <button class="zoom-reset-btn" aria-label="Reset zoom to 100%" @click="resetZoomView">
+              &#128269;
+            </button>
+          </div>
         </div>
 
         <div class="canvas-zone">
@@ -133,6 +139,7 @@
             @pointermove="onCanvasPointerMove($event); onPointerMove($event)"
             @pointerup="onPointerUp"
             @pointerleave="onCanvasPointerLeave($event); onPointerUp($event)"
+            @wheel.prevent="onCanvasWheel"
             @dblclick="onCanvasDoubleClick"
             @dragover.prevent
             @drop.prevent="onCanvasDrop"
@@ -388,6 +395,7 @@
         marqueeRect: null,
         viewOffsetX: 0,
         viewOffsetY: 0,
+        zoomScale: 1,
         iconSets: [],
         pendingIconSetId: null,
         pointerState: {
@@ -425,6 +433,9 @@
       },
       sortedSchemas() {
         return [...this.store.schemas].sort((a, b) => b.updatedAt - a.updatedAt)
+      },
+      zoomPercent() {
+        return Math.round(this.zoomScale * 100)
       }
     },
     methods: {
@@ -1284,9 +1295,71 @@
       getPointerPosition(event) {
         const p = this.getCanvasPosition(event)
         return {
-          x: p.x + this.viewOffsetX,
-          y: p.y + this.viewOffsetY
+          x: (p.x / this.zoomScale) + this.viewOffsetX,
+          y: (p.y / this.zoomScale) + this.viewOffsetY
         }
+      },
+      onCanvasWheel(event) {
+        if (!this.isPointerInCanvas) {
+          return
+        }
+        const oldZoom = this.zoomScale
+        const currentPercent = Math.round(oldZoom * 100)
+        const direction = event.deltaY < 0 ? 1 : -1
+        const nextPercent = Math.min(400, Math.max(10, currentPercent + (direction * 10)))
+        const nextZoom = nextPercent / 100
+        if (nextZoom === oldZoom) {
+          return
+        }
+        const canvasPos = this.getCanvasPosition(event)
+        const worldXBefore = (canvasPos.x / oldZoom) + this.viewOffsetX
+        const worldYBefore = (canvasPos.y / oldZoom) + this.viewOffsetY
+        this.zoomScale = nextZoom
+        this.viewOffsetX = worldXBefore - (canvasPos.x / nextZoom)
+        this.viewOffsetY = worldYBefore - (canvasPos.y / nextZoom)
+        this.updateCanvasPointerPosition(event)
+        this.renderCanvas()
+      },
+      resetZoomView() {
+        this.zoomScale = 1
+
+        if (!this.activeSchema || this.activeSchema.elements.length === 0) {
+          this.viewOffsetX = 0
+          this.viewOffsetY = 0
+          this.renderCanvas()
+          return
+        }
+
+        const ctx = this.getCanvasContext()
+        const entries = this.activeSchema.elements
+          .map((element) => ({ element, bounds: this.getElementBounds(element, ctx) }))
+          .filter((entry) => Boolean(entry.bounds))
+
+        if (entries.length === 0) {
+          this.viewOffsetX = 0
+          this.viewOffsetY = 0
+          this.renderCanvas()
+          return
+        }
+
+        entries.sort((a, b) => {
+          if (a.bounds.x !== b.bounds.x) {
+            return a.bounds.x - b.bounds.x
+          }
+          return a.bounds.y - b.bounds.y
+        })
+
+        const target = entries[0].bounds
+        const canvas = this.$refs.canvas
+        const rect = canvas.getBoundingClientRect()
+        const viewportWidth = Math.max(1, rect.width)
+        const viewportHeight = Math.max(1, rect.height)
+        const targetCenterX = target.x + (target.w / 2)
+        const targetCenterY = target.y + (target.h / 2)
+
+        this.viewOffsetX = Math.max(0, targetCenterX - (viewportWidth / 2))
+        this.viewOffsetY = Math.max(0, targetCenterY - (viewportHeight / 2))
+        this.renderCanvas()
       },
       updateCanvasPointerPosition(event) {
         if (!event || typeof event.clientX !== 'number' || typeof event.clientY !== 'number') {
@@ -1484,8 +1557,8 @@
           const canvasPos = this.getCanvasPosition(event)
           const dx = canvasPos.x - this.pointerState.startX
           const dy = canvasPos.y - this.pointerState.startY
-          this.viewOffsetX = Math.max(0, this.pointerState.startViewOffsetX - dx)
-          this.viewOffsetY = Math.max(0, this.pointerState.startViewOffsetY - dy)
+          this.viewOffsetX = Math.max(0, this.pointerState.startViewOffsetX - (dx / this.zoomScale))
+          this.viewOffsetY = Math.max(0, this.pointerState.startViewOffsetY - (dy / this.zoomScale))
           this.renderCanvas()
           return
         }
@@ -1885,16 +1958,17 @@
         ctx.lineWidth = 1
 
         const grid = 20
-        const startX = -(((this.viewOffsetX % grid) + grid) % grid)
-        const startY = -(((this.viewOffsetY % grid) + grid) % grid)
+        const scaledGrid = grid * this.zoomScale
+        const startX = -((((this.viewOffsetX * this.zoomScale) % scaledGrid) + scaledGrid) % scaledGrid)
+        const startY = -((((this.viewOffsetY * this.zoomScale) % scaledGrid) + scaledGrid) % scaledGrid)
 
-        for (let x = startX; x < width; x += grid) {
+        for (let x = startX; x < width; x += scaledGrid) {
           ctx.beginPath()
           ctx.moveTo(x, 0)
           ctx.lineTo(x, height)
           ctx.stroke()
         }
-        for (let y = startY; y < height; y += grid) {
+        for (let y = startY; y < height; y += scaledGrid) {
           ctx.beginPath()
           ctx.moveTo(0, y)
           ctx.lineTo(width, y)
@@ -1902,6 +1976,7 @@
         }
 
         ctx.save()
+        ctx.scale(this.zoomScale, this.zoomScale)
         ctx.translate(-this.viewOffsetX, -this.viewOffsetY)
 
         if (this.activeSchema) {
@@ -2364,6 +2439,32 @@ body {
 
 .save-state.dirty {
   color: var(--warn);
+}
+
+.zoom-state {
+  margin: 0;
+  color: #2c4f8b;
+  font-weight: 600;
+}
+
+.zoom-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zoom-reset-btn {
+  border: none;
+  background: transparent;
+  color: #2c4f8b;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.zoom-reset-btn:hover {
+  color: #173b76;
 }
 
 .canvas-zone {
