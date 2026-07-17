@@ -108,6 +108,24 @@
               >
               <span class="layer-info">/ {{ getSelectedLayerInfo().total }}</span>
             </div>
+            <div class="layer-multi-controls">
+              <button
+                class="collapse-btn"
+                :disabled="!getSelectedLayerInfo().canMoveUp"
+                @click="moveLayerUp()"
+                aria-label="Move layer up"
+              >
+                &#9652;
+              </button>
+              <button
+                class="collapse-btn"
+                :disabled="!getSelectedLayerInfo().canMoveDown"
+                @click="moveLayerDown()"
+                aria-label="Move layer down"
+              >
+                &#9662;
+              </button>
+            </div>
           </div>
         </div>
 
