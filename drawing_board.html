@@ -553,7 +553,9 @@
           startElement: null,
           startElements: null,
           resizeHandle: null,
-          historyCaptured: false
+          historyCaptured: false,
+          ctrlPressed: false,
+          initialSelection: []
         },
         isDirty: false,
         historyBySchema: {},
@@ -1132,6 +1134,14 @@
       },
       setSingleSelection(elementId) {
         this.selectedElementIds = elementId ? [elementId] : []
+      },
+      toggleElementInSelection(elementId) {
+        const index = this.selectedElementIds.indexOf(elementId)
+        if (index >= 0) {
+          this.selectedElementIds.splice(index, 1)
+        } else {
+          this.selectedElementIds.push(elementId)
+        }
       },
       clearSelection() {
         this.selectedElementIds = []
@@ -2072,7 +2082,9 @@
 
           const hit = this.hitTest(pos.x, pos.y)
           if (hit) {
-            if (!this.isElementSelected(hit.id)) {
+            if (event.ctrlKey || event.metaKey) {
+              this.toggleElementInSelection(hit.id)
+            } else if (!this.isElementSelected(hit.id)) {
               this.setSingleSelection(hit.id)
             }
             this.pointerState.mode = 'drag'
@@ -2087,8 +2099,12 @@
               }, {})
             this.pointerState.resizeHandle = null
           } else {
-            this.clearSelection()
             this.pointerState.mode = 'marquee'
+            this.pointerState.ctrlPressed = event.ctrlKey || event.metaKey
+            this.pointerState.initialSelection = this.selectedElementIds.slice()
+            if (!this.pointerState.ctrlPressed) {
+              this.clearSelection()
+            }
             this.pointerState.startX = pos.x
             this.pointerState.startY = pos.y
             this.pointerState.startElement = null
@@ -2220,9 +2236,16 @@
           const height = Math.abs(pos.y - this.pointerState.startY)
           this.marqueeRect = { x: left, y: top, w: width, h: height }
           const ctx = this.getCanvasContext()
-          this.selectedElementIds = this.activeSchema.elements
+          const newSelection = this.activeSchema.elements
             .filter((element) => this.isBoundsInsideMarquee(this.getElementBounds(element, ctx), this.marqueeRect))
             .map((element) => element.id)
+          if (this.pointerState.ctrlPressed) {
+            this.selectedElementIds = [
+              ...new Set([...this.pointerState.initialSelection, ...newSelection])
+            ]
+          } else {
+            this.selectedElementIds = newSelection
+          }
           this.renderCanvas()
           return
         }
@@ -2284,6 +2307,8 @@
         this.pointerState.startElements = null
         this.pointerState.resizeHandle = null
         this.pointerState.historyCaptured = false
+        this.pointerState.ctrlPressed = false
+        this.pointerState.initialSelection = []
         this.renderCanvas()
       },
       getResizeHandles(element) {
