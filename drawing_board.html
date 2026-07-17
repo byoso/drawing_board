@@ -1308,7 +1308,7 @@
           height: dimensions.height
         })
         if (/^https?:\/\//i.test(rawSrc) && storedSrc === rawSrc) {
-          this.showToast('Remote icon kept as URL: export may fail if CORS blocks embedding.', 'error')
+          this.showToast('Remote icon kept as URL: export may fail if CORS blocks embedding.', 'warning')
         }
         this.persistStore()
       },
@@ -1371,7 +1371,7 @@
           delete this.iconImageCache[nextSrc]
           delete this.iconImageCache[storedSrc]
           if (/^https?:\/\//i.test(nextSrc) && storedSrc === nextSrc) {
-            this.showToast('Remote icon kept as URL: export may fail if CORS blocks embedding.', 'error')
+            this.showToast('Remote icon kept as URL: export may fail if CORS blocks embedding.', 'warning')
           }
         }
 
@@ -2243,7 +2243,7 @@
         }
 
         if (blob && usedFallbackForRemoteIcons) {
-          this.showToast('Some remote icons could not be embedded and were replaced in the export.', 'error')
+          this.showToast('Some remote icons could not be embedded and were replaced in the export.', 'warning')
         }
 
         return blob
@@ -2407,7 +2407,7 @@
         const capabilities = this.getBrowserCapabilities()
         if (!capabilities.clipboardWriteImage || !capabilities.secureContext) {
           this.triggerBlobDownload(blob)
-          this.showToast('Clipboard image API unavailable here. PNG downloaded instead.', 'error')
+          this.showToast('Clipboard image API unavailable here. PNG downloaded instead.', 'warning')
           return
         }
         try {
@@ -2415,7 +2415,7 @@
           this.showToast('PNG copied to clipboard.')
         } catch (error) {
           this.triggerBlobDownload(blob)
-          this.showToast('Clipboard copy failed. PNG downloaded instead.', 'error')
+          this.showToast('Clipboard copy failed. PNG downloaded instead.', 'warning')
         }
       },
       saveCurrentSchemaAsSvg() {
@@ -2435,7 +2435,7 @@
 
         if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write || !window.isSecureContext) {
           this.triggerBlobDownload(blob, 'diagram.svg')
-          this.showToast('Clipboard SVG API unavailable here. SVG downloaded instead.', 'error')
+          this.showToast('Clipboard SVG API unavailable here. SVG downloaded instead.', 'warning')
           return
         }
 
@@ -2449,7 +2449,7 @@
           this.showToast('SVG copied to clipboard.')
         } catch (error) {
           this.triggerBlobDownload(blob, 'diagram.svg')
-          this.showToast('Clipboard copy failed. SVG downloaded instead.', 'error')
+          this.showToast('Clipboard copy failed. SVG downloaded instead.', 'warning')
         }
       },
       async saveSelectedFrameAsPng() {
@@ -2476,7 +2476,7 @@
         const capabilities = this.getBrowserCapabilities()
         if (!capabilities.clipboardWriteImage || !capabilities.secureContext) {
           this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.png`)
-          this.showToast('Clipboard image API unavailable here. Frame PNG downloaded instead.', 'error')
+          this.showToast('Clipboard image API unavailable here. Frame PNG downloaded instead.', 'warning')
           return
         }
         try {
@@ -2484,7 +2484,7 @@
           this.showToast('Frame PNG copied to clipboard.')
         } catch (error) {
           this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.png`)
-          this.showToast('Clipboard copy failed. Frame PNG downloaded instead.', 'error')
+          this.showToast('Clipboard copy failed. Frame PNG downloaded instead.', 'warning')
         }
       },
       saveSelectedFrameAsSvg() {
@@ -2513,7 +2513,7 @@
 
         if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write || !window.isSecureContext) {
           this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.svg`)
-          this.showToast('Clipboard SVG API unavailable here. Frame SVG downloaded instead.', 'error')
+          this.showToast('Clipboard SVG API unavailable here. Frame SVG downloaded instead.', 'warning')
           return
         }
 
@@ -2527,7 +2527,7 @@
           this.showToast('Frame SVG copied to clipboard.')
         } catch (error) {
           this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.svg`)
-          this.showToast('Clipboard copy failed. Frame SVG downloaded instead.', 'error')
+          this.showToast('Clipboard copy failed. Frame SVG downloaded instead.', 'warning')
         }
       },
       getCanvasPosition(event) {
@@ -3587,7 +3587,7 @@
           if (this.toast.message === message) {
             this.toast.message = ''
           }
-        }, 2200)
+        }, 5000)
       }
     },
     mounted() {
@@ -4318,6 +4318,11 @@ body {
 
 .toast.error {
   background: #9b3724;
+}
+
+.toast.warning {
+  background: #ffdd57;
+  color: #363636;
 }
 
 @media (max-width: 1080px) {
