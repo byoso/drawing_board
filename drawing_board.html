@@ -410,6 +410,28 @@
       </div>
     </div>
 
+    <div class="modal" :class="{ 'is-active': textEditor.isOpen }">
+      <div class="modal-background" @click="cancelTextEdit"></div>
+      <div class="modal-card text-editor-modal">
+        <header class="modal-card-head">
+          <p class="modal-card-title">{{ textEditor.isCreating ? 'Create text' : 'Edit text' }}</p>
+          <button class="delete" aria-label="close" @click="cancelTextEdit"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="field">
+            <label class="label">Text (press Enter for new lines)</label>
+            <div class="control">
+              <textarea ref="textEditorInput" class="textarea" v-model="textEditor.text" placeholder="Enter text..." rows="6"></textarea>
+            </div>
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button class="button save-btn" @click="saveTextEdit">{{ textEditor.isCreating ? 'Create' : 'Save' }}</button>
+          <button class="button ghost-btn" @click="cancelTextEdit">Cancel</button>
+        </footer>
+      </div>
+    </div>
+
     <div v-if="toast.message" class="toast" :class="toast.type">
       {{ toast.message }}
     </div>
@@ -551,6 +573,13 @@
           iconId: null,
           name: '',
           src: ''
+        },
+        textEditor: {
+          isOpen: false,
+          element: null,
+          text: '',
+          isCreating: false,
+          creationPos: { x: 0, y: 0 }
         },
         toast: {
           message: '',
@@ -1371,10 +1400,18 @@
           }
           localCtx.save()
           localCtx.font = `${element.fontSize || 18}px Space Grotesk`
-          const width = localCtx.measureText(element.text || '').width
+          const fontSize = element.fontSize || 18
+          const lineHeight = fontSize * 1.2
+          const text = element.text || ''
+          const lines = text.split('\n')
+          let maxWidth = 0
+          lines.forEach((line) => {
+            const width = localCtx.measureText(line).width
+            if (width > maxWidth) maxWidth = width
+          })
           localCtx.restore()
-          const height = element.fontSize || 18
-          return { x: element.x, y: element.y - height, w: Math.max(1, width), h: height }
+          const height = lines.length * lineHeight
+          return { x: element.x, y: element.y - fontSize, w: Math.max(1, maxWidth), h: Math.max(height, fontSize) }
         }
         return null
       },
@@ -1921,18 +1958,54 @@
         if (!textElement) {
           return
         }
-        const updatedText = prompt('Edit text:', textElement.text || '')
-        if (updatedText === null) {
-          return
-        }
-        if (updatedText === textElement.text) {
+        this.textEditor.element = textElement
+        this.textEditor.text = textElement.text || ''
+        this.textEditor.isCreating = false
+        this.textEditor.isOpen = true
+        this.setSingleSelection(textElement.id)
+        this.$nextTick(() => {
+          const textarea = this.$refs.textEditorInput
+          if (textarea) {
+            textarea.focus()
+            textarea.select()
+          }
+        })
+      },
+      saveTextEdit() {
+        if (!this.textEditor.text.trim()) {
+          this.textEditor.isOpen = false
           return
         }
         this.pushHistoryCheckpoint()
-        textElement.text = updatedText
-        this.setSingleSelection(textElement.id)
+        if (this.textEditor.isCreating) {
+          // Création d'un nouveau texte
+          this.activeSchema.elements.push({
+            id: uid('el'),
+            type: 'text',
+            x: this.textEditor.creationPos.x,
+            y: this.textEditor.creationPos.y,
+            text: this.textEditor.text,
+            color: this.activeColor,
+            fontSize: this.getCurrentFontSize()
+          })
+          const newElement = this.activeSchema.elements[this.activeSchema.elements.length - 1]
+          this.setSingleSelection(newElement.id)
+        } else {
+          // Édition d'un texte existant
+          if (this.textEditor.element) {
+            this.textEditor.element.text = this.textEditor.text
+          }
+        }
         this.markDirty()
         this.renderCanvas()
+        this.textEditor.isOpen = false
+        this.textEditor.isCreating = false
+      },
+      cancelTextEdit() {
+        this.textEditor.isOpen = false
+        this.textEditor.isCreating = false
+        this.textEditor.element = null
+        this.textEditor.text = ''
       },
       onPointerDown(event) {
         const canvas = this.$refs.canvas
@@ -1969,22 +2042,17 @@
         this.pointerState.historyCaptured = false
 
         if (this.activeTool === 'text') {
-          const text = prompt('Text:')
-          if (text && text.trim()) {
-            this.pushHistoryCheckpoint()
-            this.activeSchema.elements.push({
-              id: uid('el'),
-              type: 'text',
-              x: pos.x,
-              y: pos.y,
-              text: text.trim(),
-              color: this.activeColor,
-              fontSize: this.getCurrentFontSize()
-            })
-            this.setSingleSelection(this.activeSchema.elements[this.activeSchema.elements.length - 1].id)
-            this.markDirty()
-            this.renderCanvas()
-          }
+          this.textEditor.isCreating = true
+          this.textEditor.creationPos = { x: pos.x, y: pos.y }
+          this.textEditor.text = ''
+          this.textEditor.element = null
+          this.textEditor.isOpen = true
+          this.$nextTick(() => {
+            const textarea = this.$refs.textEditorInput
+            if (textarea) {
+              textarea.focus()
+            }
+          })
           return
         }
 
@@ -2438,11 +2506,19 @@
           ctx.font = `${element.fontSize || 18}px Space Grotesk`
           ctx.fillStyle = element.color || '#17233f'
           ctx.textBaseline = 'alphabetic'
-          ctx.fillText(element.text || '', element.x, element.y)
+          const text = element.text || ''
+          const lines = text.split('\n')
+          const fontSize = element.fontSize || 18
+          const lineHeight = fontSize * 1.2
+          let maxWidth = 0
+          lines.forEach((line, index) => {
+            ctx.fillText(line, element.x, element.y + (index * lineHeight))
+            const width = ctx.measureText(line).width
+            if (width > maxWidth) maxWidth = width
+          })
           if (selected) {
-            const width = ctx.measureText(element.text || '').width
-            const height = element.fontSize || 18
-            this.drawSelectionRect(ctx, element.x, element.y - height, width, height)
+            const height = lines.length * lineHeight
+            this.drawSelectionRect(ctx, element.x, element.y - fontSize, maxWidth, height)
           }
         }
 
