@@ -24,6 +24,7 @@
         <p>Simple and fast diagrams, stored locally</p>
       </div>
       <div class="top-actions">
+        <button class="button is-small svg-save-btn" @click="saveCurrentSchemaAsSvg">Save SVG</button>
         <button class="button is-small png-save-btn" @click="saveCurrentSchemaAsPng">Save PNG</button>
         <button class="button is-small png-clip-btn" @click="copySchemaPngToClipboard">PNG to Clipboard</button>
         <button class="button is-small save-btn" @click="saveCurrentSchema">Save</button>
@@ -171,6 +172,13 @@
                 :disabled="!canShiftSelectedFrameIndex(1)"
                 @click="shiftSelectedFrameIndex(1)"
               >+</button>
+            </div>
+
+            <p class="palette-title">Frame export</p>
+            <div class="frame-export-actions">
+              <button class="button is-small png-save-btn" @click="saveSelectedFrameAsPng">Save PNG</button>
+              <button class="button is-small png-clip-btn" @click="copySelectedFramePngToClipboard">PNG to Clipboard</button>
+              <button class="button is-small svg-save-btn" @click="saveSelectedFrameAsSvg">Save SVG</button>
             </div>
           </div>
 
@@ -500,7 +508,7 @@
   const STORAGE_KEY = 'drawing_board_store_v1'
   const SCHEMA_VERSION = 1
   const RECT_CORNER_RADIUS = 8
-  const WORLD_WIDTH = 10000
+  const WORLD_WIDTH = 15000
   const WORLD_HEIGHT = 10000
 
   function uid(prefix = 'id') {
@@ -682,12 +690,32 @@
         const schemaName = this.activeSchema && this.activeSchema.name
           ? this.activeSchema.name.replace(/[^a-z0-9-_]/gi, '_').toLowerCase()
           : ''
+        const extensionMatch = String(fallbackName || '').match(/(\.[a-z0-9]+)$/i)
+        const extension = extensionMatch ? extensionMatch[1] : '.png'
+        const fallbackBase = String(fallbackName || '').replace(/(\.[a-z0-9]+)$/i, '')
+        const hasCustomFallbackBase = Boolean(fallbackBase) && fallbackBase.toLowerCase() !== 'diagram'
+        const downloadBase = hasCustomFallbackBase ? fallbackBase : schemaName
         anchor.href = url
-        anchor.download = schemaName ? `${schemaName}.png` : fallbackName
+        anchor.download = downloadBase ? `${downloadBase}${extension}` : fallbackName
         document.body.appendChild(anchor)
         anchor.click()
         document.body.removeChild(anchor)
         URL.revokeObjectURL(url)
+      },
+      escapeXml(value) {
+        return String(value == null ? '' : value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;')
+      },
+      toSvgNumber(value) {
+        const num = Number(value)
+        if (!Number.isFinite(num)) {
+          return 0
+        }
+        return Math.round(num * 100) / 100
       },
       clamp(value, min, max) {
         return Math.min(max, Math.max(min, value))
@@ -827,6 +855,31 @@
           return null
         }
         return frame
+      },
+      getSelectedFrameExportBounds(showErrorToast = true) {
+        const frame = this.getSelectedFrame()
+        if (!frame) {
+          if (showErrorToast) {
+            this.showToast('Select a frame first.', 'error')
+          }
+          return null
+        }
+        const bounds = normalizeRect(frame)
+        if (bounds.w <= 0 || bounds.h <= 0) {
+          if (showErrorToast) {
+            this.showToast('Frame has invalid dimensions.', 'error')
+          }
+          return null
+        }
+        return bounds
+      },
+      getSelectedFrameExportFileBase() {
+        const frame = this.getSelectedFrame()
+        if (!frame) {
+          return 'frame'
+        }
+        const raw = this.getFrameDisplayName(frame).replace(/[^a-z0-9-_]/gi, '_').toLowerCase()
+        return raw || `frame_${this.getFrameIndexValue(frame) || 1}`
       },
       canShiftSelectedFrameIndex(delta) {
         const frame = this.getSelectedFrame()
@@ -2015,22 +2068,45 @@
           h: Math.max(1, maxY - minY)
         }
       },
-      async buildCroppedSchemaPngBlob() {
+      async buildSchemaPngBlob(exportBounds = null) {
         if (!this.activeSchema || this.activeSchema.elements.length === 0) {
           this.showToast('Nothing to export: diagram is empty.', 'error')
           return null
         }
-        const margin = 5
-        const measureCanvas = document.createElement('canvas')
-        const measureCtx = measureCanvas.getContext('2d')
-        const bounds = this.computeElementsBounds(this.activeSchema.elements, measureCtx)
-        if (!bounds) {
-          this.showToast('Could not compute diagram bounds.', 'error')
-          return null
+
+        let bounds = null
+        let exportWidth = 0
+        let exportHeight = 0
+        let offsetX = 0
+        let offsetY = 0
+        let clipToBounds = false
+
+        if (exportBounds) {
+          bounds = normalizeRect(exportBounds)
+          if (bounds.w <= 0 || bounds.h <= 0) {
+            this.showToast('Could not compute export bounds.', 'error')
+            return null
+          }
+          exportWidth = Math.ceil(bounds.w)
+          exportHeight = Math.ceil(bounds.h)
+          offsetX = -bounds.x
+          offsetY = -bounds.y
+          clipToBounds = true
+        } else {
+          const margin = 5
+          const measureCanvas = document.createElement('canvas')
+          const measureCtx = measureCanvas.getContext('2d')
+          bounds = this.computeElementsBounds(this.activeSchema.elements, measureCtx)
+          if (!bounds) {
+            this.showToast('Could not compute diagram bounds.', 'error')
+            return null
+          }
+          exportWidth = Math.ceil(bounds.w + (margin * 2))
+          exportHeight = Math.ceil(bounds.h + (margin * 2))
+          offsetX = margin - bounds.x
+          offsetY = margin - bounds.y
         }
 
-        const exportWidth = Math.ceil(bounds.w + (margin * 2))
-        const exportHeight = Math.ceil(bounds.h + (margin * 2))
         const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3))
 
         const outCanvas = document.createElement('canvas')
@@ -2042,13 +2118,20 @@
         outCtx.clearRect(0, 0, exportWidth, exportHeight)
         outCtx.fillStyle = '#ffffff'
         outCtx.fillRect(0, 0, exportWidth, exportHeight)
-        outCtx.translate(margin - bounds.x, margin - bounds.y)
+        outCtx.save()
+        if (clipToBounds) {
+          outCtx.beginPath()
+          outCtx.rect(0, 0, exportWidth, exportHeight)
+          outCtx.clip()
+        }
+        outCtx.translate(offsetX, offsetY)
 
         let usedFallbackForRemoteIcons = false
         for (const element of this.activeSchema.elements) {
           const usedFallback = await this.drawElementForExport(outCtx, element)
           usedFallbackForRemoteIcons = usedFallbackForRemoteIcons || usedFallback
         }
+        outCtx.restore()
 
         const blob = await new Promise((resolve) => {
           try {
@@ -2068,6 +2151,140 @@
         }
 
         return blob
+      },
+      async buildCroppedSchemaPngBlob() {
+        return this.buildSchemaPngBlob()
+      },
+      buildCroppedSchemaSvgString(exportBounds = null) {
+        if (!this.activeSchema || this.activeSchema.elements.length === 0) {
+          this.showToast('Nothing to export: diagram is empty.', 'error')
+          return null
+        }
+
+        let bounds = null
+        let exportWidth = 0
+        let exportHeight = 0
+        let offsetX = 0
+        let offsetY = 0
+        let clipToBounds = false
+
+        if (exportBounds) {
+          bounds = normalizeRect(exportBounds)
+          if (bounds.w <= 0 || bounds.h <= 0) {
+            this.showToast('Could not compute export bounds.', 'error')
+            return null
+          }
+          exportWidth = Math.ceil(bounds.w)
+          exportHeight = Math.ceil(bounds.h)
+          offsetX = -bounds.x
+          offsetY = -bounds.y
+          clipToBounds = true
+        } else {
+          const margin = 5
+          const measureCanvas = document.createElement('canvas')
+          const measureCtx = measureCanvas.getContext('2d')
+          bounds = this.computeElementsBounds(this.activeSchema.elements, measureCtx)
+          if (!bounds) {
+            this.showToast('Could not compute diagram bounds.', 'error')
+            return null
+          }
+          exportWidth = Math.ceil(bounds.w + (margin * 2))
+          exportHeight = Math.ceil(bounds.h + (margin * 2))
+          offsetX = margin - bounds.x
+          offsetY = margin - bounds.y
+        }
+
+        const lines = []
+        lines.push(`<?xml version="1.0" encoding="UTF-8"?>`)
+        lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`)
+        lines.push(`<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="#ffffff"/>`)
+        if (clipToBounds) {
+          lines.push(`<defs><clipPath id="frameExportClip"><rect x="0" y="0" width="${exportWidth}" height="${exportHeight}"/></clipPath></defs>`)
+          lines.push(`<g clip-path="url(#frameExportClip)">`)
+        }
+
+        this.activeSchema.elements.forEach((element) => {
+          if (element.type === 'rect') {
+            const r = normalizeRect(element)
+            const rx = this.toSvgNumber(Math.max(0, Math.min(RECT_CORNER_RADIUS, r.w / 2, r.h / 2)))
+            const dash = element.strokeStyle === 'dashed' ? ` stroke-dasharray="10 7"` : ''
+            lines.push(`<rect x="${this.toSvgNumber(r.x + offsetX)}" y="${this.toSvgNumber(r.y + offsetY)}" width="${this.toSvgNumber(r.w)}" height="${this.toSvgNumber(r.h)}" rx="${rx}" ry="${rx}" fill="${this.escapeXml(element.fill || '#8ea9ff22')}" stroke="${this.escapeXml(element.stroke || '#1f2d54')}" stroke-width="${this.toSvgNumber(element.strokeWidth || 2)}"${dash}/>`)
+            return
+          }
+
+          if (element.type === 'frame') {
+            const r = normalizeRect(element)
+            lines.push(`<rect x="${this.toSvgNumber(r.x + offsetX)}" y="${this.toSvgNumber(r.y + offsetY)}" width="${this.toSvgNumber(r.w)}" height="${this.toSvgNumber(r.h)}" fill="none" stroke="#ff8a00" stroke-width="2" stroke-dasharray="10 7"/>`)
+            lines.push(`<text x="${this.toSvgNumber(r.x + offsetX + 10)}" y="${this.toSvgNumber(r.y + offsetY - 6)}" fill="#ff8a00" font-family="Sora, Space Grotesk, sans-serif" font-size="24" font-weight="700">${this.escapeXml(this.getFrameDisplayName(element))}</text>`)
+            return
+          }
+
+          if (element.type === 'ellipse') {
+            const r = normalizeRect(element)
+            const dash = element.strokeStyle === 'dashed' ? ` stroke-dasharray="10 7"` : ''
+            lines.push(`<ellipse cx="${this.toSvgNumber(r.x + offsetX + (r.w / 2))}" cy="${this.toSvgNumber(r.y + offsetY + (r.h / 2))}" rx="${this.toSvgNumber(r.w / 2)}" ry="${this.toSvgNumber(r.h / 2)}" fill="${this.escapeXml(element.fill || '#8ea9ff22')}" stroke="${this.escapeXml(element.stroke || '#1f2d54')}" stroke-width="${this.toSvgNumber(element.strokeWidth || 2)}"${dash}/>`)
+            return
+          }
+
+          if (element.type === 'arrow') {
+            const stroke = this.escapeXml(element.stroke || '#1f2d54')
+            const width = this.toSvgNumber(element.strokeWidth || 2)
+            const dash = element.strokeStyle === 'dashed' ? ` stroke-dasharray="10 7"` : ''
+            const x1 = this.toSvgNumber(element.x1 + offsetX)
+            const y1 = this.toSvgNumber(element.y1 + offsetY)
+            const x2 = this.toSvgNumber(element.x2 + offsetX)
+            const y2 = this.toSvgNumber(element.y2 + offsetY)
+            lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round"${dash}/>`)
+
+            const angle = Math.atan2((element.y2 || 0) - (element.y1 || 0), (element.x2 || 0) - (element.x1 || 0))
+            const size = 12
+            const p2x = this.toSvgNumber((element.x2 + offsetX) - size * Math.cos(angle - Math.PI / 6))
+            const p2y = this.toSvgNumber((element.y2 + offsetY) - size * Math.sin(angle - Math.PI / 6))
+            const p3x = this.toSvgNumber((element.x2 + offsetX) - size * Math.cos(angle + Math.PI / 6))
+            const p3y = this.toSvgNumber((element.y2 + offsetY) - size * Math.sin(angle + Math.PI / 6))
+            lines.push(`<polygon points="${x2},${y2} ${p2x},${p2y} ${p3x},${p3y}" fill="${stroke}"/>`)
+            return
+          }
+
+          if (element.type === 'text') {
+            const fontSize = this.toSvgNumber(element.fontSize || 18)
+            const lineHeight = this.toSvgNumber((element.fontSize || 18) * 1.2)
+            const x = this.toSvgNumber((element.x || 0) + offsetX)
+            const y = this.toSvgNumber((element.y || 0) + offsetY)
+            const color = this.escapeXml(element.color || '#17233f')
+            const linesText = String(element.text || '').split('\n')
+            lines.push(`<text x="${x}" y="${y}" fill="${color}" font-family="Space Grotesk, sans-serif" font-size="${fontSize}">`)
+            linesText.forEach((lineText, index) => {
+              const dy = index === 0 ? 0 : lineHeight
+              lines.push(`<tspan x="${x}" dy="${dy}">${this.escapeXml(lineText)}</tspan>`)
+            })
+            lines.push(`</text>`)
+            return
+          }
+
+          if (element.type === 'icon') {
+            const r = normalizeRect(element)
+            const href = this.escapeXml(element.src || '')
+            if (!href) {
+              return
+            }
+            lines.push(`<image x="${this.toSvgNumber(r.x + offsetX)}" y="${this.toSvgNumber(r.y + offsetY)}" width="${this.toSvgNumber(r.w)}" height="${this.toSvgNumber(r.h)}" href="${href}" preserveAspectRatio="none"/>`)
+          }
+        })
+
+        if (clipToBounds) {
+          lines.push(`</g>`)
+        }
+
+        lines.push(`</svg>`)
+        return lines.join('\n')
+      },
+      buildCroppedSchemaSvgBlob() {
+        const markup = this.buildCroppedSchemaSvgString()
+        if (!markup) {
+          return null
+        }
+        return new Blob([markup], { type: 'image/svg+xml;charset=utf-8' })
       },
       async saveCurrentSchemaAsPng() {
         const blob = await this.buildCroppedSchemaPngBlob()
@@ -2102,6 +2319,118 @@
         } catch (error) {
           this.triggerBlobDownload(blob)
           this.showToast('Clipboard copy failed. PNG downloaded instead.', 'error')
+        }
+      },
+      saveCurrentSchemaAsSvg() {
+        const blob = this.buildCroppedSchemaSvgBlob()
+        if (!blob) {
+          return
+        }
+        this.triggerBlobDownload(blob, 'diagram.svg')
+        this.showToast('SVG downloaded.')
+      },
+      async copySchemaSvgToClipboard() {
+        const markup = this.buildCroppedSchemaSvgString()
+        if (!markup) {
+          return
+        }
+        const blob = new Blob([markup], { type: 'image/svg+xml;charset=utf-8' })
+
+        if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write || !window.isSecureContext) {
+          this.triggerBlobDownload(blob, 'diagram.svg')
+          this.showToast('Clipboard SVG API unavailable here. SVG downloaded instead.', 'error')
+          return
+        }
+
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'image/svg+xml': blob,
+              'text/plain': new Blob([markup], { type: 'text/plain;charset=utf-8' })
+            })
+          ])
+          this.showToast('SVG copied to clipboard.')
+        } catch (error) {
+          this.triggerBlobDownload(blob, 'diagram.svg')
+          this.showToast('Clipboard copy failed. SVG downloaded instead.', 'error')
+        }
+      },
+      async saveSelectedFrameAsPng() {
+        const bounds = this.getSelectedFrameExportBounds()
+        if (!bounds) {
+          return
+        }
+        const blob = await this.buildSchemaPngBlob(bounds)
+        if (!blob) {
+          return
+        }
+        this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.png`)
+        this.showToast('Frame PNG downloaded.')
+      },
+      async copySelectedFramePngToClipboard() {
+        const bounds = this.getSelectedFrameExportBounds()
+        if (!bounds) {
+          return
+        }
+        const blob = await this.buildSchemaPngBlob(bounds)
+        if (!blob) {
+          return
+        }
+        const capabilities = this.getBrowserCapabilities()
+        if (!capabilities.clipboardWriteImage || !capabilities.secureContext) {
+          this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.png`)
+          this.showToast('Clipboard image API unavailable here. Frame PNG downloaded instead.', 'error')
+          return
+        }
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+          this.showToast('Frame PNG copied to clipboard.')
+        } catch (error) {
+          this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.png`)
+          this.showToast('Clipboard copy failed. Frame PNG downloaded instead.', 'error')
+        }
+      },
+      saveSelectedFrameAsSvg() {
+        const bounds = this.getSelectedFrameExportBounds()
+        if (!bounds) {
+          return
+        }
+        const markup = this.buildCroppedSchemaSvgString(bounds)
+        if (!markup) {
+          return
+        }
+        const blob = new Blob([markup], { type: 'image/svg+xml;charset=utf-8' })
+        this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.svg`)
+        this.showToast('Frame SVG downloaded.')
+      },
+      async copySelectedFrameSvgToClipboard() {
+        const bounds = this.getSelectedFrameExportBounds()
+        if (!bounds) {
+          return
+        }
+        const markup = this.buildCroppedSchemaSvgString(bounds)
+        if (!markup) {
+          return
+        }
+        const blob = new Blob([markup], { type: 'image/svg+xml;charset=utf-8' })
+
+        if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write || !window.isSecureContext) {
+          this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.svg`)
+          this.showToast('Clipboard SVG API unavailable here. Frame SVG downloaded instead.', 'error')
+          return
+        }
+
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'image/svg+xml': blob,
+              'text/plain': new Blob([markup], { type: 'text/plain;charset=utf-8' })
+            })
+          ])
+          this.showToast('Frame SVG copied to clipboard.')
+        } catch (error) {
+          this.triggerBlobDownload(blob, `${this.getSelectedFrameExportFileBase()}.svg`)
+          this.showToast('Clipboard copy failed. Frame SVG downloaded instead.', 'error')
         }
       },
       getCanvasPosition(event) {
@@ -2775,8 +3104,8 @@
           ctx.setLineDash([])
           ctx.fillStyle = '#ff8a00'
           ctx.font = '700 24px Sora'
-          ctx.textBaseline = 'top'
-          ctx.fillText(this.getFrameDisplayName(element), r.x + 10, r.y + 8)
+          ctx.textBaseline = 'bottom'
+          ctx.fillText(this.getFrameDisplayName(element), r.x + 10, r.y - 6)
 
           if (selected) {
             this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
@@ -3314,6 +3643,7 @@ body {
 .icon-set-actions .button,
 .icon-thumb-meta .button,
 .modal-card-foot .button,
+.frame-export-actions .button,
 .zoom-tools .button {
   border-radius: 8px !important;
   overflow: hidden;
@@ -3436,6 +3766,13 @@ body {
 .frame-index-row {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.frame-export-actions {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3790,11 +4127,30 @@ body {
 }
 
 .save-btn,
+.svg-save-btn,
+.svg-clip-btn,
 .png-save-btn,
 .png-clip-btn,
 .ghost-btn,
 .danger-btn {
   border-radius: 8px;
+}
+
+.svg-save-btn {
+  background: #1b74d8;
+  color: white;
+  border: none;
+}
+
+.svg-save-btn:hover {
+  color: white;
+  background: #155fb2;
+}
+
+.svg-clip-btn {
+  background: #e5efff;
+  border: 1px solid #bcd0f2;
+  color: #274a7a;
 }
 
 .png-save-btn {
