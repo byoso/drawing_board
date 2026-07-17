@@ -47,7 +47,7 @@
           <strong>{{ tool.label }}</strong>
         </button>
 
-        <div v-if="!(activeTool === 'select' && selectedElementIds.length > 0)" class="color-palette" aria-label="Drawing color palette">
+        <div v-if="activeTool !== 'frame' && !(activeTool === 'select' && selectedElementIds.length > 0)" class="color-palette" aria-label="Drawing color palette">
           <p class="palette-title">Color</p>
           <div class="palette-grid">
             <button
@@ -63,7 +63,7 @@
           </div>
         </div>
 
-        <div v-if="!(activeTool === 'select' && selectedElementIds.length > 0)" class="draw-options" aria-label="Drawing options">
+        <div v-if="activeTool !== 'frame' && !(activeTool === 'select' && selectedElementIds.length > 0)" class="draw-options" aria-label="Drawing options">
           <p class="palette-title">Line style</p>
           <div class="options-row">
             <button
@@ -93,6 +93,14 @@
         <div
           v-if="activeTool === 'select' && selectedElementIds.length === 1 && getSelectedLayerInfo()"
           class="layer-controls"
+          .frame-index-controls {
+            margin-bottom: 10px;
+          }
+          .frame-index-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
           aria-label="Layer controls"
         >
           <p class="palette-title">Layer</p>
@@ -136,7 +144,31 @@
         >
           <p class="palette-title">Properties</p>
 
-          <div v-if="getApplicablePropertiesForSelection().hasColor" class="color-palette">
+          <div v-if="getSelectedFrame()" class="frame-index-controls">
+            <p class="palette-title">Frame index</p>
+            <div class="frame-index-row">
+              <button
+                class="option-chip"
+                :disabled="!canShiftSelectedFrameIndex(-1)"
+                @click="shiftSelectedFrameIndex(-1)"
+              >-</button>
+              <input
+                class="input is-small layer-input"
+                type="number"
+                min="1"
+                :max="getFramesForActiveSchema().length"
+                :value="getSelectedFrame().frameIndex"
+                @change="onSelectedFrameIndexInputChange"
+              >
+              <button
+                class="option-chip"
+                :disabled="!canShiftSelectedFrameIndex(1)"
+                @click="shiftSelectedFrameIndex(1)"
+              >+</button>
+            </div>
+          </div>
+
+          <div v-if="!getSelectedFrame() && getApplicablePropertiesForSelection().hasColor" class="color-palette">
             <p class="palette-title">Color</p>
             <div class="palette-grid">
               <button
@@ -152,7 +184,7 @@
             </div>
           </div>
 
-          <div v-if="getApplicablePropertiesForSelection().hasLineStyle" class="options-row">
+          <div v-if="!getSelectedFrame() && getApplicablePropertiesForSelection().hasLineStyle" class="options-row">
             <p class="palette-title">Line style</p>
             <div class="options-row">
               <button
@@ -168,7 +200,7 @@
             </div>
           </div>
 
-          <div v-if="getApplicablePropertiesForSelection().hasSize" class="options-row">
+          <div v-if="!getSelectedFrame() && getApplicablePropertiesForSelection().hasSize" class="options-row">
             <p class="palette-title">Size</p>
             <div class="options-row">
               <button
@@ -181,7 +213,7 @@
             </div>
           </div>
 
-          <div v-if="selectedElementIds.length > 1 && getApplicablePropertiesForSelection().canChangeLayer" class="layer-row">
+          <div v-if="!getSelectedFrame() && selectedElementIds.length > 1 && getApplicablePropertiesForSelection().canChangeLayer" class="layer-row">
             <p class="palette-title">Layers level</p>
             <div class="layer-multi-controls">
               <button
@@ -282,6 +314,22 @@
             <div class="schema-actions" @click.stop>
               <button class="button is-small ghost-btn" @click="startRename(schema)">Rename</button>
               <button class="button is-small danger-btn" @click="deleteSchema(schema.id)">Delete</button>
+            </div>
+            <div v-if="schema.id === activeSchemaId" class="schema-frames" @click.stop>
+              <p class="schema-frames-title">Frames</p>
+              <div v-if="getFramesForSchema(schema).length" class="schema-frames-list">
+                <button
+                  v-for="frame in getFramesForSchema(schema)"
+                  :key="frame.id"
+                  class="schema-frame-row"
+                  :class="{ active: selectedElementIds.length === 1 && selectedElementIds[0] === frame.id }"
+                  @click.stop="focusFrame(frame.id)"
+                >
+                  <strong>Frame {{ frame.frameIndex }}</strong>
+                  <span>{{ Math.round(Math.abs(frame.w || 0)) }} x {{ Math.round(Math.abs(frame.h || 0)) }}</span>
+                </button>
+              </div>
+              <p v-else class="schema-frames-empty">No frames yet</p>
             </div>
           </article>
         </div>
@@ -516,6 +564,7 @@
           { id: 'rect', label: 'Rectangle', shortcut: 'R' },
           { id: 'ellipse', label: 'Ellipse', shortcut: 'E' },
           { id: 'arrow', label: 'Arrow', shortcut: 'A' },
+          { id: 'frame', label: 'Frame', shortcut: 'F' },
           { id: 'text', label: 'Text', shortcut: 'T' }
         ],
         colorPalette: ['#6B8EEA', '#4FA8A6', '#6DAE6B', '#D0A15A', '#E08960', '#C481B9', '#8E91C8', '#7E8AA2'],
@@ -660,7 +709,7 @@
           element.y = this.clamp(element.y, 0, WORLD_HEIGHT)
           return
         }
-        if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon') {
+        if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon' || element.type === 'frame') {
           const width = Math.abs(element.w || 0)
           const height = Math.abs(element.h || 0)
           const maxX = Math.max(0, WORLD_WIDTH - width)
@@ -668,6 +717,170 @@
           element.x = this.clamp(element.x, 0, maxX)
           element.y = this.clamp(element.y, 0, maxY)
         }
+      },
+      getFrameIndexValue(frame) {
+        const parsed = Number.parseInt(frame && frame.frameIndex, 10)
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          return null
+        }
+        return parsed
+      },
+      getFramesForSchema(schema) {
+        if (!schema || !Array.isArray(schema.elements)) {
+          return []
+        }
+        return schema.elements
+          .filter((element) => element.type === 'frame')
+          .sort((a, b) => {
+            const aIndex = this.getFrameIndexValue(a)
+            const bIndex = this.getFrameIndexValue(b)
+            const safeA = aIndex == null ? Number.MAX_SAFE_INTEGER : aIndex
+            const safeB = bIndex == null ? Number.MAX_SAFE_INTEGER : bIndex
+            if (safeA !== safeB) {
+              return safeA - safeB
+            }
+            return a.id.localeCompare(b.id)
+          })
+      },
+      getFramesForActiveSchema() {
+        return this.getFramesForSchema(this.activeSchema)
+      },
+      ensureFrameIndexes(schema) {
+        if (!schema || !Array.isArray(schema.elements)) {
+          return
+        }
+        const frames = this.getFramesForSchema(schema)
+        const used = new Set()
+        let next = 1
+        frames.forEach((frame) => {
+          let idx = this.getFrameIndexValue(frame)
+          if (idx == null || used.has(idx)) {
+            while (used.has(next)) {
+              next += 1
+            }
+            idx = next
+          }
+          frame.frameIndex = idx
+          frame.stroke = '#ff8a00'
+          frame.strokeStyle = 'dashed'
+          frame.strokeWidth = typeof frame.strokeWidth === 'number' ? frame.strokeWidth : 2
+          frame.fill = 'rgba(0,0,0,0)'
+          used.add(idx)
+          if (idx >= next) {
+            next = idx + 1
+          }
+        })
+      },
+      getNextFrameIndex(schema = this.activeSchema) {
+        const frames = this.getFramesForSchema(schema)
+        if (frames.length === 0) {
+          return 1
+        }
+        return Math.max(...frames.map((frame) => this.getFrameIndexValue(frame) || 0)) + 1
+      },
+      getSelectedFrame() {
+        if (!this.activeSchema || this.selectedElementIds.length !== 1) {
+          return null
+        }
+        const frame = this.activeSchema.elements.find((element) => element.id === this.selectedElementIds[0])
+        if (!frame || frame.type !== 'frame') {
+          return null
+        }
+        return frame
+      },
+      canShiftSelectedFrameIndex(delta) {
+        const frame = this.getSelectedFrame()
+        if (!frame) {
+          return false
+        }
+        const total = this.getFramesForActiveSchema().length
+        if (total <= 1) {
+          return false
+        }
+        const current = this.getFrameIndexValue(frame) || 1
+        const next = current + delta
+        return next >= 1 && next <= total
+      },
+      setSelectedFrameIndex(nextIndex) {
+        const frame = this.getSelectedFrame()
+        if (!frame) {
+          return
+        }
+        const frames = this.getFramesForActiveSchema()
+        const total = frames.length
+        if (total === 0) {
+          return
+        }
+        const current = this.getFrameIndexValue(frame) || 1
+        const targetIndex = this.clamp(nextIndex, 1, total)
+        if (targetIndex === current) {
+          return
+        }
+        const targetFrame = frames.find((item) => item.id !== frame.id && (this.getFrameIndexValue(item) || 1) === targetIndex)
+        this.pushHistoryCheckpoint()
+        frame.frameIndex = targetIndex
+        if (targetFrame) {
+          targetFrame.frameIndex = current
+        }
+        this.markDirty()
+        this.renderCanvas()
+      },
+      shiftSelectedFrameIndex(delta) {
+        const frame = this.getSelectedFrame()
+        if (!frame) {
+          return
+        }
+        const current = this.getFrameIndexValue(frame) || 1
+        this.setSelectedFrameIndex(current + delta)
+      },
+      onSelectedFrameIndexInputChange(event) {
+        const value = Number.parseInt(event.target.value, 10)
+        const frame = this.getSelectedFrame()
+        if (!frame) {
+          return
+        }
+        if (Number.isNaN(value)) {
+          event.target.value = String(this.getFrameIndexValue(frame) || 1)
+          return
+        }
+        this.setSelectedFrameIndex(value)
+      },
+      focusFrame(frameId) {
+        if (!this.activeSchema) {
+          return
+        }
+        const frame = this.activeSchema.elements.find((element) => element.id === frameId && element.type === 'frame')
+        if (!frame) {
+          return
+        }
+        const canvas = this.$refs.canvas
+        if (!canvas) {
+          return
+        }
+
+        const bounds = normalizeRect(frame)
+        const rect = canvas.getBoundingClientRect()
+        const viewportWidth = Math.max(1, rect.width)
+        const viewportHeight = Math.max(1, rect.height)
+        const padding = 24
+        const fitZoomX = Math.max(0.1, (viewportWidth - (padding * 2)) / Math.max(1, bounds.w))
+        const fitZoomY = Math.max(0.1, (viewportHeight - (padding * 2)) / Math.max(1, bounds.h))
+        const fitZoom = Math.min(fitZoomX, fitZoomY)
+        const targetZoom = this.clamp(Math.min(this.zoomScale, fitZoom), 0.1, 4)
+
+        this.zoomScale = targetZoom
+        const centerX = bounds.x + (bounds.w / 2)
+        const centerY = bounds.y + (bounds.h / 2)
+        const clampedView = this.clampViewOffset(
+          centerX - (viewportWidth / (2 * targetZoom)),
+          centerY - (viewportHeight / (2 * targetZoom)),
+          targetZoom
+        )
+        this.viewOffsetX = clampedView.x
+        this.viewOffsetY = clampedView.y
+        this.activeTool = 'select'
+        this.setSingleSelection(frame.id)
+        this.renderCanvas()
       },
       clampViewOffset(nextX, nextY, zoom = this.zoomScale) {
         const canvas = this.$refs.canvas
@@ -1154,11 +1367,12 @@
       },
       getSelectedLineStyle() {
         const element = this.getSelectedElement()
-        return element && element.type !== 'text' ? (element.strokeStyle || 'solid') : null
+        return element && element.type !== 'text' && element.type !== 'frame' ? (element.strokeStyle || 'solid') : null
       },
       getSelectedColor() {
         const element = this.getSelectedElement()
         if (!element) return null
+        if (element.type === 'frame') return null
         if (element.type === 'text') return element.color || null
         if (element.type === 'rect' || element.type === 'ellipse') {
           // Pour rect/ellipse, on compare avec le stroke car c'est la couleur principale
@@ -1169,6 +1383,9 @@
       getSelectedSize() {
         const element = this.getSelectedElement()
         if (!element) {
+          return null
+        }
+        if (element.type === 'frame') {
           return null
         }
         if (element.type === 'text') {
@@ -1184,10 +1401,14 @@
           return { hasLineStyle: false, hasSize: false, hasColor: false, canChangeLayer: false }
         }
         const elements = this.activeSchema.elements.filter((element) => this.selectedElementIds.includes(element.id))
-        const hasLineStyle = elements.some((element) => element.type !== 'text')
-        const hasSize = elements.some((element) => element.type !== 'text' || true)
-        const hasColor = elements.some((element) => element.type !== 'text' || element.type === 'text')
-        const canChangeLayer = elements.length > 0
+        const hasFrame = elements.some((element) => element.type === 'frame')
+        if (elements.length === 1 && hasFrame) {
+          return { hasLineStyle: false, hasSize: false, hasColor: false, canChangeLayer: false }
+        }
+        const hasLineStyle = elements.some((element) => element.type !== 'text' && element.type !== 'frame')
+        const hasSize = elements.some((element) => element.type !== 'icon' && element.type !== 'frame')
+        const hasColor = elements.some((element) => element.type !== 'icon' && element.type !== 'frame')
+        const canChangeLayer = elements.length > 0 && !hasFrame
         return { hasLineStyle, hasSize, hasColor, canChangeLayer }
       },
       getSelectedLayerInfo() {
@@ -1195,6 +1416,10 @@
           return null
         }
         const selectedId = this.selectedElementIds[0]
+        const selectedElement = this.activeSchema.elements.find((element) => element.id === selectedId)
+        if (!selectedElement || selectedElement.type === 'frame') {
+          return null
+        }
         const index = this.activeSchema.elements.findIndex((element) => element.id === selectedId)
         if (index === -1) {
           return null
@@ -1268,7 +1493,7 @@
         this.pushHistoryCheckpoint()
         this.selectedElementIds.forEach((elementId) => {
           const element = this.activeSchema.elements.find((el) => el.id === elementId)
-          if (element && element.type !== 'text') {
+          if (element && element.type !== 'text' && element.type !== 'frame') {
             element.strokeStyle = style
           }
         })
@@ -1288,7 +1513,7 @@
           }
           if (element.type === 'text') {
             element.fontSize = preset.fontSize
-          } else if (element.type !== 'icon') {
+          } else if (element.type !== 'icon' && element.type !== 'frame') {
             element.strokeWidth = preset.strokeWidth
           }
         })
@@ -1307,6 +1532,8 @@
           }
           if (element.type === 'text') {
             element.color = color
+          } else if (element.type === 'frame') {
+            return
           } else if (element.type === 'rect' || element.type === 'ellipse') {
             element.stroke = color
             element.fill = hexToRgba(color, 0.22)
@@ -1391,7 +1618,7 @@
         if (!element) {
           return null
         }
-        if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon') {
+        if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon' || element.type === 'frame') {
           const r = normalizeRect(element)
           return { x: r.x, y: r.y, w: r.w, h: r.h }
         }
@@ -1454,6 +1681,7 @@
                 iconSets: Array.isArray(parsed.iconSets) ? parsed.iconSets.map((iconSet) => this.normalizeIconSet(iconSet)) : []
               }
               this.iconSets = this.store.iconSets
+              this.store.schemas.forEach((schema) => this.ensureFrameIndexes(schema))
             }
           } catch (error) {
             this.showToast('Invalid local store detected, resetting it.', 'error')
@@ -1685,6 +1913,7 @@
         }
         const schema = this.makeEmptySchema(payload.name || `Import ${new Date().toLocaleString('en-GB')}`)
         schema.elements = payload.elements.map((element) => ({ ...element, id: element.id || uid('el') }))
+        this.ensureFrameIndexes(schema)
         schema.updatedAt = Date.now()
         this.store.schemas.push(schema)
         this.seedSchemaHistory(schema)
@@ -2124,7 +2353,27 @@
           strokeStyle: this.lineStyle
         }
 
-        if (this.activeTool === 'rect' || this.activeTool === 'ellipse') {
+        if (this.activeTool === 'rect' || this.activeTool === 'ellipse' || this.activeTool === 'frame') {
+          if (this.activeTool === 'frame') {
+            this.draftElement = {
+              id: uid('el'),
+              type: 'frame',
+              x: pos.x,
+              y: pos.y,
+              w: 0,
+              h: 0,
+              frameIndex: this.getNextFrameIndex(),
+              stroke: '#ff8a00',
+              strokeWidth: 2,
+              strokeStyle: 'dashed',
+              fill: 'rgba(0,0,0,0)'
+            }
+            this.pointerState.mode = 'draw'
+            this.pointerState.startX = pos.x
+            this.pointerState.startY = pos.y
+            this.renderCanvas()
+            return
+          }
           this.draftElement = {
             ...base,
             type: this.activeTool,
@@ -2215,7 +2464,7 @@
           if (!target || !this.pointerState.startElement || !this.pointerState.resizeHandle) {
             return
           }
-          if (target.type !== 'rect' && target.type !== 'ellipse' && target.type !== 'arrow' && target.type !== 'icon') {
+          if (target.type !== 'rect' && target.type !== 'ellipse' && target.type !== 'arrow' && target.type !== 'icon' && target.type !== 'frame') {
             return
           }
           if (!this.pointerState.historyCaptured) {
@@ -2321,7 +2570,7 @@
             { key: 'end', x: element.x2, y: element.y2, cursor: 'move' }
           ]
         }
-        if (element.type !== 'rect' && element.type !== 'ellipse' && element.type !== 'icon') {
+        if (element.type !== 'rect' && element.type !== 'ellipse' && element.type !== 'icon' && element.type !== 'frame') {
           return []
         }
         const r = normalizeRect(element)
@@ -2345,7 +2594,7 @@
           return null
         }
         const element = this.activeSchema.elements.find((item) => item.id === this.selectedElementIds[0])
-        if (!element || (element.type !== 'rect' && element.type !== 'ellipse' && element.type !== 'arrow' && element.type !== 'icon')) {
+        if (!element || (element.type !== 'rect' && element.type !== 'ellipse' && element.type !== 'arrow' && element.type !== 'icon' && element.type !== 'frame')) {
           return null
         }
         const handles = this.getResizeHandles(element)
@@ -2403,6 +2652,18 @@
 
         for (let i = this.activeSchema.elements.length - 1; i >= 0; i -= 1) {
           const element = this.activeSchema.elements[i]
+          if (element.type === 'frame') {
+            const r = normalizeRect(element)
+            ctx.save()
+            ctx.beginPath()
+            ctx.rect(r.x, r.y, r.w, r.h)
+            ctx.lineWidth = Math.max(10, (element.strokeWidth || 2) + 8)
+            const isHit = ctx.isPointInStroke(x, y)
+            ctx.restore()
+            if (isHit) {
+              return element
+            }
+          }
           if (element.type === 'rect') {
             const r = normalizeRect(element)
             ctx.save()
@@ -2460,6 +2721,24 @@
         ctx.fillStyle = element.fill || '#8ea9ff22'
         ctx.lineWidth = element.strokeWidth || 2
         ctx.setLineDash(this.getDashArrayFromStyle(element.strokeStyle))
+
+        if (element.type === 'frame') {
+          const r = normalizeRect(element)
+          ctx.strokeStyle = '#ff8a00'
+          ctx.lineWidth = 2
+          ctx.setLineDash([10, 7])
+          ctx.strokeRect(r.x, r.y, r.w, r.h)
+
+          ctx.setLineDash([])
+          ctx.fillStyle = '#ff8a00'
+          ctx.font = '700 24px Sora'
+          ctx.textBaseline = 'top'
+          ctx.fillText(`Frame ${this.getFrameIndexValue(element) || 1}`, r.x + 10, r.y + 8)
+
+          if (selected) {
+            this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
+          }
+        }
 
         if (element.type === 'rect') {
           const r = normalizeRect(element)
@@ -2642,7 +2921,7 @@
         if (this.activeSchema) {
           this.activeSchema.elements.forEach((element) => {
             this.drawElement(ctx, element, this.isElementSelected(element.id))
-            if (this.selectedElementIds.length === 1 && this.isElementSelected(element.id) && (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'icon')) {
+            if (this.selectedElementIds.length === 1 && this.isElementSelected(element.id) && (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'icon' || element.type === 'frame')) {
               this.drawResizeHandles(ctx, element)
             }
           })
@@ -2716,6 +2995,17 @@
             this.clampElementToWorld(element)
           })
         }
+        let nextFrameIndex = this.getNextFrameIndex()
+        clones.forEach((element) => {
+          if (element.type === 'frame') {
+            element.frameIndex = nextFrameIndex
+            element.stroke = '#ff8a00'
+            element.strokeStyle = 'dashed'
+            element.strokeWidth = 2
+            element.fill = 'rgba(0,0,0,0)'
+            nextFrameIndex += 1
+          }
+        })
         this.pushHistoryCheckpoint()
         this.activeSchema.elements.push(...clones)
         this.selectedElementIds = clones.map((element) => element.id)
@@ -2783,6 +3073,7 @@
           r: 'rect',
           e: 'ellipse',
           a: 'arrow',
+          f: 'frame',
           t: 'text'
         }
         if (map[key]) {
