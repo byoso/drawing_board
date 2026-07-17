@@ -158,13 +158,14 @@
                 @click="shiftSelectedFrameIndex(-1)"
               >-</button>
               <input
-                class="input is-small layer-input"
+                class="input is-small layer-input frame-index-input"
                 type="number"
                 min="1"
                 :max="getFramesForActiveSchema().length"
                 :value="getSelectedFrame().frameIndex"
                 @change="onSelectedFrameIndexInputChange"
               >
+              <span class="frame-index-total">/ {{ getFramesForActiveSchema().length }}</span>
               <button
                 class="option-chip"
                 :disabled="!canShiftSelectedFrameIndex(1)"
@@ -3436,6 +3437,23 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.frame-index-total {
+  font-size: 0.8rem;
+  color: #3b4b6a;
+  font-weight: 600;
+}
+
+.frame-index-input {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.frame-index-input::-webkit-outer-spin-button,
+.frame-index-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .layer-multi-controls {
