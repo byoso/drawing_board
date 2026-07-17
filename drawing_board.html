@@ -510,6 +510,20 @@
   const RECT_CORNER_RADIUS = 8
   const WORLD_WIDTH = 15000
   const WORLD_HEIGHT = 10000
+  const FRAME_STYLE = Object.freeze({
+    stroke: '#ff8a00',
+    strokeWidth: 2 ,
+    strokeStyle: 'solid',
+    fill: 'rgba(0,0,0,0)',
+    dashArray: [10, 7],
+    title: Object.freeze({
+      fontSize: 24,
+      fontWeight: 700,
+      fontFamily: 'Sora',
+      xOffset: 10,
+      yOffset: -6
+    })
+  })
 
   function uid(prefix = 'id') {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
@@ -829,10 +843,7 @@
           if (!String(frame.name || '').trim()) {
             frame.name = this.getDefaultFrameName(idx)
           }
-          frame.stroke = '#ff8a00'
-          frame.strokeStyle = 'dashed'
-          frame.strokeWidth = typeof frame.strokeWidth === 'number' ? frame.strokeWidth : 2
-          frame.fill = 'rgba(0,0,0,0)'
+          this.applyFrameStyle(frame)
           used.add(idx)
           if (idx >= next) {
             next = idx + 1
@@ -996,6 +1007,15 @@
       },
       getDashArrayFromStyle(style) {
         return style === 'dashed' ? [10, 7] : []
+      },
+      applyFrameStyle(frame) {
+        if (!frame) {
+          return
+        }
+        frame.stroke = FRAME_STYLE.stroke
+        frame.strokeStyle = FRAME_STYLE.strokeStyle
+        frame.strokeWidth = FRAME_STYLE.strokeWidth
+        frame.fill = FRAME_STYLE.fill
       },
       normalizeIconSet(iconSet) {
         return {
@@ -2214,8 +2234,9 @@
 
           if (element.type === 'frame') {
             const r = normalizeRect(element)
-            lines.push(`<rect x="${this.toSvgNumber(r.x + offsetX)}" y="${this.toSvgNumber(r.y + offsetY)}" width="${this.toSvgNumber(r.w)}" height="${this.toSvgNumber(r.h)}" fill="none" stroke="#ff8a00" stroke-width="2" stroke-dasharray="10 7"/>`)
-            lines.push(`<text x="${this.toSvgNumber(r.x + offsetX + 10)}" y="${this.toSvgNumber(r.y + offsetY - 6)}" fill="#ff8a00" font-family="Sora, Space Grotesk, sans-serif" font-size="24" font-weight="700">${this.escapeXml(this.getFrameDisplayName(element))}</text>`)
+            const dash = (element.strokeStyle || FRAME_STYLE.strokeStyle) === 'dashed' ? ` stroke-dasharray="${FRAME_STYLE.dashArray.join(' ')}"` : ''
+            lines.push(`<rect x="${this.toSvgNumber(r.x + offsetX)}" y="${this.toSvgNumber(r.y + offsetY)}" width="${this.toSvgNumber(r.w)}" height="${this.toSvgNumber(r.h)}" fill="none" stroke="${this.escapeXml(FRAME_STYLE.stroke)}" stroke-width="${this.toSvgNumber(FRAME_STYLE.strokeWidth)}"${dash}/>`)
+            lines.push(`<text x="${this.toSvgNumber(r.x + offsetX + FRAME_STYLE.title.xOffset)}" y="${this.toSvgNumber(r.y + offsetY + FRAME_STYLE.title.yOffset)}" fill="${this.escapeXml(FRAME_STYLE.stroke)}" font-family="${this.escapeXml(`${FRAME_STYLE.title.fontFamily}, Space Grotesk, sans-serif`)}" font-size="${this.toSvgNumber(FRAME_STYLE.title.fontSize)}" font-weight="${this.toSvgNumber(FRAME_STYLE.title.fontWeight)}">${this.escapeXml(this.getFrameDisplayName(element))}</text>`)
             return
           }
 
@@ -2734,12 +2755,9 @@
               w: 0,
               h: 0,
               frameIndex,
-              name: this.getDefaultFrameName(frameIndex),
-              stroke: '#ff8a00',
-              strokeWidth: 2,
-              strokeStyle: 'dashed',
-              fill: 'rgba(0,0,0,0)'
+              name: this.getDefaultFrameName(frameIndex)
             }
+            this.applyFrameStyle(this.draftElement)
             this.pointerState.mode = 'draw'
             this.pointerState.startX = pos.x
             this.pointerState.startY = pos.y
@@ -3026,6 +3044,25 @@
           const element = this.activeSchema.elements[i]
           if (element.type === 'frame') {
             const r = normalizeRect(element)
+            const frameTitle = this.getFrameDisplayName(element)
+            const frameTitleFontSize = 24
+            const frameTitleX = r.x + 10
+            const frameTitleBaselineY = r.y - 6
+
+            ctx.save()
+            ctx.font = '700 24px Sora'
+            const frameTitleWidth = ctx.measureText(frameTitle).width
+            ctx.restore()
+
+            const titlePadding = 4
+            const titleLeft = frameTitleX - titlePadding
+            const titleTop = (frameTitleBaselineY - frameTitleFontSize) - titlePadding
+            const titleRight = frameTitleX + frameTitleWidth + titlePadding
+            const titleBottom = frameTitleBaselineY + titlePadding
+            if (x >= titleLeft && x <= titleRight && y >= titleTop && y <= titleBottom) {
+              return element
+            }
+
             ctx.save()
             ctx.beginPath()
             ctx.rect(r.x, r.y, r.w, r.h)
@@ -3096,16 +3133,17 @@
 
         if (element.type === 'frame') {
           const r = normalizeRect(element)
-          ctx.strokeStyle = '#ff8a00'
-          ctx.lineWidth = 2
-          ctx.setLineDash([10, 7])
+          const dash = this.getDashArrayFromStyle(element.strokeStyle || FRAME_STYLE.strokeStyle)
+          ctx.strokeStyle = FRAME_STYLE.stroke
+          ctx.lineWidth = FRAME_STYLE.strokeWidth
+          ctx.setLineDash(dash)
           ctx.strokeRect(r.x, r.y, r.w, r.h)
 
           ctx.setLineDash([])
-          ctx.fillStyle = '#ff8a00'
-          ctx.font = '700 24px Sora'
+          ctx.fillStyle = FRAME_STYLE.stroke
+          ctx.font = `${FRAME_STYLE.title.fontWeight} ${FRAME_STYLE.title.fontSize}px ${FRAME_STYLE.title.fontFamily}`
           ctx.textBaseline = 'bottom'
-          ctx.fillText(this.getFrameDisplayName(element), r.x + 10, r.y - 6)
+          ctx.fillText(this.getFrameDisplayName(element), r.x + FRAME_STYLE.title.xOffset, r.y + FRAME_STYLE.title.yOffset)
 
           if (selected) {
             this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
@@ -3372,10 +3410,7 @@
           if (element.type === 'frame') {
             element.frameIndex = nextFrameIndex
             element.name = String((element.name || '')).trim() || this.getDefaultFrameName(nextFrameIndex)
-            element.stroke = '#ff8a00'
-            element.strokeStyle = 'dashed'
-            element.strokeWidth = 2
-            element.fill = 'rgba(0,0,0,0)'
+            this.applyFrameStyle(element)
             nextFrameIndex += 1
           }
         })
