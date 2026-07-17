@@ -905,7 +905,8 @@
         const fitZoomX = Math.max(0.1, (viewportWidth - (padding * 2)) / Math.max(1, bounds.w))
         const fitZoomY = Math.max(0.1, (viewportHeight - (padding * 2)) / Math.max(1, bounds.h))
         const fitZoom = Math.min(fitZoomX, fitZoomY)
-        const targetZoom = this.clamp(Math.min(this.zoomScale, fitZoom), 0.1, 4)
+        // Default to 100%, and only zoom out if 100% cannot fit the whole frame.
+        const targetZoom = this.clamp(Math.min(1, fitZoom), 0.1, 4)
 
         this.zoomScale = targetZoom
         const centerX = bounds.x + (bounds.w / 2)
