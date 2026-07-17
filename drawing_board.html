@@ -47,7 +47,7 @@
           <strong>{{ tool.label }}</strong>
         </button>
 
-        <div class="color-palette" aria-label="Drawing color palette">
+        <div v-if="!(activeTool === 'select' && selectedElementIds.length > 0)" class="color-palette" aria-label="Drawing color palette">
           <p class="palette-title">Color</p>
           <div class="palette-grid">
             <button
@@ -63,7 +63,7 @@
           </div>
         </div>
 
-        <div class="draw-options" aria-label="Drawing options">
+        <div v-if="!(activeTool === 'select' && selectedElementIds.length > 0)" class="draw-options" aria-label="Drawing options">
           <p class="palette-title">Line style</p>
           <div class="options-row">
             <button
@@ -107,6 +107,81 @@
                 @change="onLayerInputChange"
               >
               <span class="layer-info">/ {{ getSelectedLayerInfo().total }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="activeTool === 'select' && selectedElementIds.length > 0"
+          class="element-properties"
+          aria-label="Element properties"
+        >
+          <p class="palette-title">Properties</p>
+
+          <div v-if="getApplicablePropertiesForSelection().hasColor" class="color-palette">
+            <p class="palette-title">Color</p>
+            <div class="palette-grid">
+              <button
+                v-for="color in colorPalette"
+                :key="color"
+                class="color-swatch"
+                :class="{ active: selectedElementIds.length === 1 && getSelectedColor() === color }"
+                :style="{ backgroundColor: color }"
+                @click="applyColorToSelection(color)"
+                :title="color"
+                aria-label="Select color"
+              ></button>
+            </div>
+          </div>
+
+          <div v-if="getApplicablePropertiesForSelection().hasLineStyle" class="options-row">
+            <p class="palette-title">Line style</p>
+            <div class="options-row">
+              <button
+                class="option-chip"
+                :class="{ active: selectedElementIds.length === 1 && getSelectedLineStyle() === 'solid' }"
+                @click="applyLineStyle('solid')"
+              >Solid</button>
+              <button
+                class="option-chip"
+                :class="{ active: selectedElementIds.length === 1 && getSelectedLineStyle() === 'dashed' }"
+                @click="applyLineStyle('dashed')"
+              >Dashed</button>
+            </div>
+          </div>
+
+          <div v-if="getApplicablePropertiesForSelection().hasSize" class="options-row">
+            <p class="palette-title">Size</p>
+            <div class="options-row">
+              <button
+                v-for="size in ['small', 'medium', 'big']"
+                :key="size"
+                class="option-chip"
+                :class="{ active: selectedElementIds.length === 1 && getSelectedSize() === size }"
+                @click="applySize(size)"
+              >{{ size }}</button>
+            </div>
+          </div>
+
+          <div v-if="selectedElementIds.length > 1 && getApplicablePropertiesForSelection().canChangeLayer" class="layer-row">
+            <p class="palette-title">Layers level</p>
+            <div class="layer-multi-controls">
+              <button
+                class="collapse-btn"
+                :disabled="!canMoveLayerUpMultiple()"
+                @click="moveLayerUpMultiple()"
+                aria-label="Move layer up"
+              >
+                &#9652;
+              </button>
+              <button
+                class="collapse-btn"
+                :disabled="!canMoveLayerDownMultiple()"
+                @click="moveLayerDownMultiple()"
+                aria-label="Move layer down"
+              >
+                &#9662;
+              </button>
             </div>
           </div>
         </div>
@@ -1014,6 +1089,50 @@
       clearSelection() {
         this.selectedElementIds = []
       },
+      getSelectedElement() {
+        if (!this.activeSchema || this.selectedElementIds.length !== 1) {
+          return null
+        }
+        return this.activeSchema.elements.find((element) => element.id === this.selectedElementIds[0])
+      },
+      getSelectedLineStyle() {
+        const element = this.getSelectedElement()
+        return element && element.type !== 'text' ? (element.strokeStyle || 'solid') : null
+      },
+      getSelectedColor() {
+        const element = this.getSelectedElement()
+        if (!element) return null
+        if (element.type === 'text') return element.color || null
+        if (element.type === 'rect' || element.type === 'ellipse') {
+          // Pour rect/ellipse, on compare avec le stroke car c'est la couleur principale
+          return element.stroke || null
+        }
+        return element.stroke || null
+      },
+      getSelectedSize() {
+        const element = this.getSelectedElement()
+        if (!element) {
+          return null
+        }
+        if (element.type === 'text') {
+          return this.drawSize
+        }
+        if (element.type !== 'icon') {
+          return this.drawSize
+        }
+        return null
+      },
+      getApplicablePropertiesForSelection() {
+        if (!this.activeSchema || this.selectedElementIds.length === 0) {
+          return { hasLineStyle: false, hasSize: false, hasColor: false, canChangeLayer: false }
+        }
+        const elements = this.activeSchema.elements.filter((element) => this.selectedElementIds.includes(element.id))
+        const hasLineStyle = elements.some((element) => element.type !== 'text')
+        const hasSize = elements.some((element) => element.type !== 'text' || true)
+        const hasColor = elements.some((element) => element.type !== 'text' || element.type === 'text')
+        const canChangeLayer = elements.length > 0
+        return { hasLineStyle, hasSize, hasColor, canChangeLayer }
+      },
       getSelectedLayerInfo() {
         if (!this.activeSchema || this.activeTool !== 'select' || this.selectedElementIds.length !== 1) {
           return null
@@ -1084,6 +1203,132 @@
           return
         }
         this.moveSelectedElementToLayer(nextValue - 1)
+      },
+      applyLineStyle(style) {
+        if (!this.activeSchema) {
+          return
+        }
+        this.pushHistoryCheckpoint()
+        this.selectedElementIds.forEach((elementId) => {
+          const element = this.activeSchema.elements.find((el) => el.id === elementId)
+          if (element && element.type !== 'text') {
+            element.strokeStyle = style
+          }
+        })
+        this.markDirty()
+        this.renderCanvas()
+      },
+      applySize(size) {
+        if (!this.activeSchema) {
+          return
+        }
+        this.pushHistoryCheckpoint()
+        const preset = this.sizePresets[size] || this.sizePresets.small
+        this.selectedElementIds.forEach((elementId) => {
+          const element = this.activeSchema.elements.find((el) => el.id === elementId)
+          if (!element) {
+            return
+          }
+          if (element.type === 'text') {
+            element.fontSize = preset.fontSize
+          } else if (element.type !== 'icon') {
+            element.strokeWidth = preset.strokeWidth
+          }
+        })
+        this.markDirty()
+        this.renderCanvas()
+      },
+      applyColorToSelection(color) {
+        if (!this.activeSchema) {
+          return
+        }
+        this.pushHistoryCheckpoint()
+        this.selectedElementIds.forEach((elementId) => {
+          const element = this.activeSchema.elements.find((el) => el.id === elementId)
+          if (!element) {
+            return
+          }
+          if (element.type === 'text') {
+            element.color = color
+          } else if (element.type === 'rect' || element.type === 'ellipse') {
+            element.stroke = color
+            element.fill = hexToRgba(color, 0.22)
+          } else {
+            element.stroke = color
+          }
+        })
+        this.markDirty()
+        this.renderCanvas()
+      },
+      canMoveLayerUpMultiple() {
+        if (!this.activeSchema || this.selectedElementIds.length === 0) {
+          return false
+        }
+        const elements = this.activeSchema.elements.filter((element) => this.selectedElementIds.includes(element.id))
+        return !elements.some((element) => {
+          const index = this.activeSchema.elements.indexOf(element)
+          return index >= this.activeSchema.elements.length - 1
+        })
+      },
+      canMoveLayerDownMultiple() {
+        if (!this.activeSchema || this.selectedElementIds.length === 0) {
+          return false
+        }
+        const elements = this.activeSchema.elements.filter((element) => this.selectedElementIds.includes(element.id))
+        return !elements.some((element) => {
+          const index = this.activeSchema.elements.indexOf(element)
+          return index <= 0
+        })
+      },
+      moveLayerUpMultiple() {
+        if (!this.activeSchema || this.selectedElementIds.length === 0) {
+          return
+        }
+        const elements = this.activeSchema.elements.filter((element) => this.selectedElementIds.includes(element.id))
+        if (elements.some((element) => {
+          const index = this.activeSchema.elements.indexOf(element)
+          return index >= this.activeSchema.elements.length - 1
+        })) {
+          return
+        }
+        this.pushHistoryCheckpoint()
+        // Traiter du bas vers le haut pour éviter que les indices changent
+        const sortedElements = elements
+          .map((el) => ({ element: el, index: this.activeSchema.elements.indexOf(el) }))
+          .sort((a, b) => a.index - b.index)
+
+        sortedElements.forEach(({ element, index }) => {
+          const currentIndex = this.activeSchema.elements.indexOf(element)
+          const [removed] = this.activeSchema.elements.splice(currentIndex, 1)
+          this.activeSchema.elements.splice(currentIndex + 1, 0, removed)
+        })
+        this.markDirty()
+        this.renderCanvas()
+      },
+      moveLayerDownMultiple() {
+        if (!this.activeSchema || this.selectedElementIds.length === 0) {
+          return
+        }
+        const elements = this.activeSchema.elements.filter((element) => this.selectedElementIds.includes(element.id))
+        if (elements.some((element) => {
+          const index = this.activeSchema.elements.indexOf(element)
+          return index <= 0
+        })) {
+          return
+        }
+        this.pushHistoryCheckpoint()
+        // Traiter du haut vers le bas pour éviter que les indices changent
+        const sortedElements = elements
+          .map((el) => ({ element: el, index: this.activeSchema.elements.indexOf(el) }))
+          .sort((a, b) => b.index - a.index)
+
+        sortedElements.forEach(({ element, index }) => {
+          const currentIndex = this.activeSchema.elements.indexOf(element)
+          const [removed] = this.activeSchema.elements.splice(currentIndex, 1)
+          this.activeSchema.elements.splice(currentIndex - 1, 0, removed)
+        })
+        this.markDirty()
+        this.renderCanvas()
       },
       getElementBounds(element, ctx) {
         if (!element) {
@@ -2722,6 +2967,40 @@ body {
   font-size: 0.8rem;
   color: #3b4b6a;
   font-weight: 600;
+}
+
+.element-properties {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e1e8f5;
+}
+
+.layer-multi-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.layer-multi-controls .collapse-btn {
+  pointer-events: auto;
+  transition: all 0.15s ease-in-out;
+  background: #e8eef8;
+  border-radius: 6px;
+}
+
+.layer-multi-controls .collapse-btn:hover:not(:disabled) {
+  background: #dce9ff;
+  color: #173b76;
+  transform: scale(1.1);
+}
+
+.layer-multi-controls .collapse-btn:active:not(:disabled) {
+  transform: scale(0.95);
+  background: #c5d3ed;
+}
+
+.layer-multi-controls .collapse-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .options-row {
