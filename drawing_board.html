@@ -93,14 +93,6 @@
         <div
           v-if="activeTool === 'select' && selectedElementIds.length === 1 && getSelectedLayerInfo()"
           class="layer-controls"
-          .frame-index-controls {
-            margin-bottom: 10px;
-          }
-          .frame-index-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          }
           aria-label="Layer controls"
         >
           <p class="palette-title">Layer</p>
@@ -145,6 +137,19 @@
           <p class="palette-title">Properties</p>
 
           <div v-if="getSelectedFrame()" class="frame-index-controls">
+            <p class="palette-title">Frame name</p>
+            <div class="field">
+              <div class="control">
+                <input
+                  class="input is-small"
+                  type="text"
+                  maxlength="120"
+                  :value="getSelectedFrameName()"
+                  @change="onSelectedFrameNameChange"
+                >
+              </div>
+            </div>
+
             <p class="palette-title">Frame index</p>
             <div class="frame-index-row">
               <button
@@ -325,8 +330,7 @@
                   :class="{ active: selectedElementIds.length === 1 && selectedElementIds[0] === frame.id }"
                   @click.stop="focusFrame(frame.id)"
                 >
-                  <strong>Frame {{ frame.frameIndex }}</strong>
-                  <span>{{ Math.round(Math.abs(frame.w || 0)) }} x {{ Math.round(Math.abs(frame.h || 0)) }}</span>
+                  <strong>{{ getFrameDisplayName(frame) }}</strong>
                 </button>
               </div>
               <p v-else class="schema-frames-empty">No frames yet</p>
@@ -725,6 +729,38 @@
         }
         return parsed
       },
+      getDefaultFrameName(index) {
+        return `Frame ${index}`
+      },
+      getFrameDisplayName(frame) {
+        const index = this.getFrameIndexValue(frame) || 1
+        const name = String((frame && frame.name) || '').trim()
+        return name || this.getDefaultFrameName(index)
+      },
+      getSelectedFrameName() {
+        const frame = this.getSelectedFrame()
+        if (!frame) {
+          return ''
+        }
+        return this.getFrameDisplayName(frame)
+      },
+      onSelectedFrameNameChange(event) {
+        const frame = this.getSelectedFrame()
+        if (!frame) {
+          return
+        }
+        const index = this.getFrameIndexValue(frame) || 1
+        const nextName = String(event.target.value || '').trim()
+        const resolvedName = nextName || this.getDefaultFrameName(index)
+        if (resolvedName === this.getFrameDisplayName(frame)) {
+          return
+        }
+        this.pushHistoryCheckpoint()
+        frame.name = resolvedName
+        event.target.value = resolvedName
+        this.markDirty()
+        this.renderCanvas()
+      },
       getFramesForSchema(schema) {
         if (!schema || !Array.isArray(schema.elements)) {
           return []
@@ -761,6 +797,9 @@
             idx = next
           }
           frame.frameIndex = idx
+          if (!String(frame.name || '').trim()) {
+            frame.name = this.getDefaultFrameName(idx)
+          }
           frame.stroke = '#ff8a00'
           frame.strokeStyle = 'dashed'
           frame.strokeWidth = typeof frame.strokeWidth === 'number' ? frame.strokeWidth : 2
@@ -2355,6 +2394,7 @@
 
         if (this.activeTool === 'rect' || this.activeTool === 'ellipse' || this.activeTool === 'frame') {
           if (this.activeTool === 'frame') {
+            const frameIndex = this.getNextFrameIndex()
             this.draftElement = {
               id: uid('el'),
               type: 'frame',
@@ -2362,7 +2402,8 @@
               y: pos.y,
               w: 0,
               h: 0,
-              frameIndex: this.getNextFrameIndex(),
+              frameIndex,
+              name: this.getDefaultFrameName(frameIndex),
               stroke: '#ff8a00',
               strokeWidth: 2,
               strokeStyle: 'dashed',
@@ -2733,7 +2774,7 @@
           ctx.fillStyle = '#ff8a00'
           ctx.font = '700 24px Sora'
           ctx.textBaseline = 'top'
-          ctx.fillText(`Frame ${this.getFrameIndexValue(element) || 1}`, r.x + 10, r.y + 8)
+          ctx.fillText(this.getFrameDisplayName(element), r.x + 10, r.y + 8)
 
           if (selected) {
             this.drawSelectionRect(ctx, r.x, r.y, r.w, r.h)
@@ -2999,6 +3040,7 @@
         clones.forEach((element) => {
           if (element.type === 'frame') {
             element.frameIndex = nextFrameIndex
+            element.name = String((element.name || '')).trim() || this.getDefaultFrameName(nextFrameIndex)
             element.stroke = '#ff8a00'
             element.strokeStyle = 'dashed'
             element.strokeWidth = 2
@@ -3385,6 +3427,16 @@ body {
   border-top: 1px solid #e1e8f5;
 }
 
+.frame-index-controls {
+  margin-bottom: 10px;
+}
+
+.frame-index-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .layer-multi-controls {
   display: flex;
   gap: 8px;
@@ -3544,6 +3596,55 @@ body {
   margin-top: 6px;
   display: flex;
   gap: 6px;
+}
+
+.schema-frames {
+  margin-top: 8px;
+  border-top: 1px dashed #efc9ac;
+  padding-top: 8px;
+}
+
+.schema-frames-title {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #7f5e49;
+}
+
+.schema-frames-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schema-frame-row {
+  width: 100%;
+  border: 1px solid #f2ccb0;
+  border-radius: 8px;
+  background: #fff8f2;
+  color: #7b5138;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.schema-frame-row strong {
+  font-size: 0.8rem;
+}
+
+.schema-frame-row.active {
+  border-color: #ff8a00;
+  box-shadow: 0 0 0 1px #ff8a0055;
+}
+
+.schema-frames-empty {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #9a7a67;
 }
 
 .icon-sets-header {
