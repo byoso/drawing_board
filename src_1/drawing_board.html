@@ -504,6 +504,8 @@
 </body>
 
 <script src="../store.js"></script>
+<script src="toolSets/common.js"></script>
+<script src="toolSets/basics.js"></script>
 <script>
   const { createApp } = Vue
 
@@ -2739,126 +2741,12 @@
         this.pointerState.pointerId = event.pointerId
         this.pointerState.historyCaptured = false
 
-        if (this.activeTool === 'text') {
-          this.textEditor.isCreating = true
-          this.textEditor.creationPos = { x: pos.x, y: pos.y }
-          this.textEditor.text = ''
-          this.textEditor.element = null
-          this.textEditor.isOpen = true
-          this.$nextTick(() => {
-            const textarea = this.$refs.textEditorInput
-            if (textarea) {
-              textarea.focus()
-            }
-          })
-          return
-        }
-
         if (this.activeTool === 'select') {
-          const resizeTarget = this.hitResizeHandle(pos.x, pos.y)
-          if (resizeTarget) {
-            this.setSingleSelection(resizeTarget.element.id)
-            this.pointerState.mode = 'resize'
-            this.pointerState.startX = pos.x
-            this.pointerState.startY = pos.y
-            this.pointerState.startElement = deepClone(resizeTarget.element)
-            this.pointerState.startElements = null
-            this.pointerState.resizeHandle = resizeTarget.handle
-            this.renderCanvas()
-            return
-          }
-
-          const hit = this.hitTest(pos.x, pos.y)
-          if (hit) {
-            if (event.ctrlKey || event.metaKey) {
-              this.toggleElementInSelection(hit.id)
-            } else if (!this.isElementSelected(hit.id)) {
-              this.setSingleSelection(hit.id)
-            }
-            this.pointerState.mode = 'drag'
-            this.pointerState.startX = pos.x
-            this.pointerState.startY = pos.y
-            this.pointerState.startElement = null
-            this.pointerState.startElements = this.activeSchema.elements
-              .filter((element) => this.isElementSelected(element.id))
-              .reduce((acc, element) => {
-                acc[element.id] = deepClone(element)
-                return acc
-              }, {})
-            this.pointerState.resizeHandle = null
-          } else {
-            this.pointerState.mode = 'marquee'
-            this.pointerState.ctrlPressed = event.ctrlKey || event.metaKey
-            this.pointerState.initialSelection = this.selectedElementIds.slice()
-            if (!this.pointerState.ctrlPressed) {
-              this.clearSelection()
-            }
-            this.pointerState.startX = pos.x
-            this.pointerState.startY = pos.y
-            this.pointerState.startElement = null
-            this.pointerState.startElements = null
-            this.pointerState.resizeHandle = null
-            this.marqueeRect = { x: pos.x, y: pos.y, w: 0, h: 0 }
-          }
-          this.renderCanvas()
+          window.DrawingBoardCommonTools.handleSelectionPointerDown(this, event, pos)
           return
         }
 
-        const base = {
-          id: uid('el'),
-          stroke: this.activeColor,
-          fill: hexToRgba(this.activeColor, 0.22),
-          strokeWidth: this.getCurrentStrokeWidth(),
-          strokeStyle: this.lineStyle
-        }
-
-        if (this.activeTool === 'rect' || this.activeTool === 'ellipse' || this.activeTool === 'frame') {
-          if (this.activeTool === 'frame') {
-            const frameIndex = this.getNextFrameIndex()
-            this.draftElement = {
-              id: uid('el'),
-              type: 'frame',
-              x: pos.x,
-              y: pos.y,
-              w: 0,
-              h: 0,
-              frameIndex,
-              name: this.getDefaultFrameName(frameIndex)
-            }
-            this.applyFrameStyle(this.draftElement)
-            this.pointerState.mode = 'draw'
-            this.pointerState.startX = pos.x
-            this.pointerState.startY = pos.y
-            this.renderCanvas()
-            return
-          }
-          this.draftElement = {
-            ...base,
-            type: this.activeTool,
-            x: pos.x,
-            y: pos.y,
-            w: 0,
-            h: 0
-          }
-          this.pointerState.mode = 'draw'
-          this.pointerState.startX = pos.x
-          this.pointerState.startY = pos.y
-          this.renderCanvas()
-          return
-        }
-
-        if (this.activeTool === 'arrow') {
-          this.draftElement = {
-            ...base,
-            type: 'arrow',
-            x1: pos.x,
-            y1: pos.y,
-            x2: pos.x,
-            y2: pos.y
-          }
-          this.pointerState.mode = 'draw'
-          this.renderCanvas()
-        }
+        window.DrawingBoardBasicTools.handlePointerDown(this, pos)
       },
       onPointerMove(event) {
         if (this.pointerState.pointerId == null || event.pointerId !== this.pointerState.pointerId) {
@@ -2882,91 +2770,11 @@
 
         const pos = this.getPointerPosition(event)
 
-        if (this.pointerState.mode === 'drag' && this.selectedElementIds.length > 0) {
-          if (!this.pointerState.startElements) {
-            return
-          }
-          const dx = pos.x - this.pointerState.startX
-          const dy = pos.y - this.pointerState.startY
-          if (dx === 0 && dy === 0) {
-            return
-          }
-          if (!this.pointerState.historyCaptured) {
-            this.pushHistoryCheckpoint()
-            this.pointerState.historyCaptured = true
-          }
-          this.selectedElementIds.forEach((elementId) => {
-            const target = this.activeSchema.elements.find((element) => element.id === elementId)
-            const startElement = this.pointerState.startElements[elementId]
-            if (!target || !startElement) {
-              return
-            }
-            if (target.type === 'arrow') {
-              target.x1 = startElement.x1 + dx
-              target.y1 = startElement.y1 + dy
-              target.x2 = startElement.x2 + dx
-              target.y2 = startElement.y2 + dy
-            } else {
-              target.x = startElement.x + dx
-              target.y = startElement.y + dy
-            }
-            this.clampElementToWorld(target)
-          })
-          this.markDirty()
-          this.renderCanvas()
+        if (window.DrawingBoardCommonTools.handleSelectionPointerMove(this, pos)) {
           return
         }
 
-        if (this.pointerState.mode === 'resize' && this.selectedElementIds.length === 1) {
-          const target = this.activeSchema.elements.find((element) => element.id === this.selectedElementIds[0])
-          if (!target || !this.pointerState.startElement || !this.pointerState.resizeHandle) {
-            return
-          }
-          if (target.type !== 'rect' && target.type !== 'ellipse' && target.type !== 'arrow' && target.type !== 'icon' && target.type !== 'frame') {
-            return
-          }
-          if (!this.pointerState.historyCaptured) {
-            this.pushHistoryCheckpoint()
-            this.pointerState.historyCaptured = true
-          }
-          this.applyResize(target, this.pointerState.startElement, this.pointerState.resizeHandle, pos.x, pos.y)
-          this.clampElementToWorld(target)
-          this.markDirty()
-          this.renderCanvas()
-          return
-        }
-
-        if (this.pointerState.mode === 'marquee') {
-          const left = Math.min(this.pointerState.startX, pos.x)
-          const top = Math.min(this.pointerState.startY, pos.y)
-          const width = Math.abs(pos.x - this.pointerState.startX)
-          const height = Math.abs(pos.y - this.pointerState.startY)
-          this.marqueeRect = { x: left, y: top, w: width, h: height }
-          const ctx = this.getCanvasContext()
-          const newSelection = this.activeSchema.elements
-            .filter((element) => this.isBoundsInsideMarquee(this.getElementBounds(element, ctx), this.marqueeRect))
-            .map((element) => element.id)
-          if (this.pointerState.ctrlPressed) {
-            this.selectedElementIds = [
-              ...new Set([...this.pointerState.initialSelection, ...newSelection])
-            ]
-          } else {
-            this.selectedElementIds = newSelection
-          }
-          this.renderCanvas()
-          return
-        }
-
-        if (this.pointerState.mode === 'draw' && this.draftElement) {
-          if (this.draftElement.type === 'arrow') {
-            this.draftElement.x2 = pos.x
-            this.draftElement.y2 = pos.y
-          } else {
-            this.draftElement.w = pos.x - this.pointerState.startX
-            this.draftElement.h = pos.y - this.pointerState.startY
-          }
-          this.renderCanvas()
-        }
+        window.DrawingBoardBasicTools.handlePointerMove(this, pos)
       },
       onPointerUp(event) {
         if (this.pointerState.pointerId != null && event.pointerId !== this.pointerState.pointerId) {
@@ -2989,21 +2797,7 @@
         }
 
         if (this.pointerState.mode === 'draw' && this.draftElement) {
-          const element = this.draftElement
-          let shouldAdd = true
-          if (element.type === 'arrow') {
-            shouldAdd = Math.hypot(element.x2 - element.x1, element.y2 - element.y1) > 5
-          } else {
-            const rect = normalizeRect(element)
-            shouldAdd = rect.w > 6 && rect.h > 6
-          }
-          if (shouldAdd) {
-            this.clampElementToWorld(element)
-            this.pushHistoryCheckpoint()
-            this.activeSchema.elements.push(element)
-            this.setSingleSelection(element.id)
-            this.markDirty()
-          }
+          window.DrawingBoardBasicTools.finalizeDraw(this)
         }
 
         this.draftElement = null
@@ -3544,16 +3338,15 @@
           return
         }
 
-        const map = {
-          s: 'select',
-          r: 'rect',
-          e: 'ellipse',
-          a: 'arrow',
-          f: 'frame',
-          t: 'text'
+        const selectTool = window.DrawingBoardCommonTools.getToolFromShortcut(key)
+        if (selectTool) {
+          this.activeTool = selectTool
+          return
         }
-        if (map[key]) {
-          this.activeTool = map[key]
+
+        const basicTool = window.DrawingBoardBasicTools.getToolFromShortcut(key)
+        if (basicTool) {
+          this.activeTool = basicTool
         }
       },
       onGlobalKeyUp(event) {
