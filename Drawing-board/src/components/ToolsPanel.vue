@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import type { ToolDef, ToolId } from '@/board/types'
+import type { RelationType, ToolDef, ToolId, ToolSetId } from '@/board/types'
 
 defineProps<{
+  toolSetOptions: Array<{ id: ToolSetId; label: string }>
+  activeToolSet: ToolSetId
   tools: ToolDef[]
   activeTool: ToolId
   colorPalette: string[]
@@ -12,12 +14,14 @@ defineProps<{
   showProperties: boolean
   selectedCount: number
   selectedIsFrame: boolean
-  selectedIsArrow: boolean
+  selectedIsArrowLike: boolean
+  selectedIsRelation: boolean
   selectedColor: string | null
   selectedLineStyle: 'solid' | 'dashed' | null
   selectedSize: 'small' | 'medium' | 'big' | null
   selectedArrowBreaks: number
   selectedArrowOrthogonal: boolean
+  selectedRelationType: RelationType
   canIncrementArrowBreaks: boolean
   canDecrementArrowBreaks: boolean
   hasColorProperty: boolean
@@ -31,6 +35,7 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
+  (e: 'select-tool-set', toolSet: ToolSetId): void
   (e: 'select-tool', toolId: ToolId): void
   (e: 'set-active-color', color: string): void
   (e: 'set-line-style', style: 'solid' | 'dashed'): void
@@ -40,10 +45,17 @@ const emit = defineEmits<{
   (e: 'apply-size', size: 'small' | 'medium' | 'big'): void
   (e: 'arrow-breaks-delta', delta: number): void
   (e: 'arrow-orthogonal-change', value: boolean): void
+  (e: 'relation-type-change', value: RelationType): void
   (e: 'frame-name-change', value: string): void
   (e: 'frame-index-change', value: number): void
   (e: 'frame-index-shift', delta: number): void
 }>()
+
+function onToolSetChange(event: Event): void {
+  const target = event.target as HTMLSelectElement | null
+  const value = String(target?.value || 'tools') as ToolSetId
+  emit('select-tool-set', value)
+}
 
 function onFrameNameChange(event: Event): void {
   const target = event.target as HTMLInputElement | null
@@ -62,11 +74,20 @@ function onArrowOrthogonalChange(event: Event): void {
   const target = event.target as HTMLInputElement | null
   emit('arrow-orthogonal-change', Boolean(target?.checked))
 }
+
+function onRelationTypeChange(event: Event): void {
+  const target = event.target as HTMLInputElement | null
+  const value = String(target?.value || 'many-to-one') as RelationType
+  emit('relation-type-change', value)
+}
 </script>
 
 <template>
   <aside class="tool-panel">
-    <p class="panel-title">Tools</p>
+    <select class="input is-small toolset-select" :value="activeToolSet" @change="onToolSetChange">
+      <option v-for="option in toolSetOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
+    </select>
+
     <button
       v-for="tool in tools"
       :key="tool.id"
@@ -187,7 +208,7 @@ function onArrowOrthogonalChange(event: Event): void {
         </div>
       </div>
 
-      <div v-if="selectedIsArrow" class="options-row">
+      <div v-if="selectedIsArrowLike" class="options-row">
         <p class="palette-title">Breaks</p>
         <div class="frame-index-row">
           <button class="option-chip" :disabled="!canDecrementArrowBreaks" @click="emit('arrow-breaks-delta', -1)">-</button>
@@ -196,7 +217,7 @@ function onArrowOrthogonalChange(event: Event): void {
         </div>
       </div>
 
-      <div v-if="selectedIsArrow" class="options-row">
+      <div v-if="selectedIsArrowLike" class="options-row">
         <label class="checkbox">
           <input
             type="checkbox"
@@ -206,10 +227,44 @@ function onArrowOrthogonalChange(event: Event): void {
           Orthogonal
         </label>
       </div>
+
+      <div v-if="selectedIsRelation" class="options-row">
+        <p class="palette-title">Relation type</p>
+        <label class="option-chip" :class="{ active: selectedRelationType === 'one-to-one' }">
+          <input
+            type="radio"
+            name="relation-type-selected"
+            value="one-to-one"
+            :checked="selectedRelationType === 'one-to-one'"
+            @change="onRelationTypeChange"
+          >
+          One to one
+        </label>
+        <label class="option-chip" :class="{ active: selectedRelationType === 'many-to-one' }">
+          <input
+            type="radio"
+            name="relation-type-selected"
+            value="many-to-one"
+            :checked="selectedRelationType === 'many-to-one'"
+            @change="onRelationTypeChange"
+          >
+          Many to one
+        </label>
+        <label class="option-chip" :class="{ active: selectedRelationType === 'many-to-many' }">
+          <input
+            type="radio"
+            name="relation-type-selected"
+            value="many-to-many"
+            :checked="selectedRelationType === 'many-to-many'"
+            @change="onRelationTypeChange"
+          >
+          Many to many
+        </label>
+      </div>
     </div>
 
-    <div v-if="activeTool === 'arrow' && !showProperties" class="element-properties" aria-label="Arrow properties">
-      <p class="palette-title">Arrow</p>
+    <div v-if="(activeTool === 'arrow' || activeTool === 'relation') && !showProperties" class="element-properties" aria-label="Arrow properties">
+      <p class="palette-title">{{ activeTool === 'relation' ? 'Relation' : 'Arrow' }}</p>
 
       <div class="options-row">
         <p class="palette-title">Breaks</p>
@@ -228,6 +283,40 @@ function onArrowOrthogonalChange(event: Event): void {
             @change="onArrowOrthogonalChange"
           >
           Orthogonal
+        </label>
+      </div>
+
+      <div v-if="activeTool === 'relation'" class="options-row">
+        <p class="palette-title">Relation type</p>
+        <label class="option-chip" :class="{ active: selectedRelationType === 'one-to-one' }">
+          <input
+            type="radio"
+            name="relation-type-creation"
+            value="one-to-one"
+            :checked="selectedRelationType === 'one-to-one'"
+            @change="onRelationTypeChange"
+          >
+          One to one
+        </label>
+        <label class="option-chip" :class="{ active: selectedRelationType === 'many-to-one' }">
+          <input
+            type="radio"
+            name="relation-type-creation"
+            value="many-to-one"
+            :checked="selectedRelationType === 'many-to-one'"
+            @change="onRelationTypeChange"
+          >
+          Many to one
+        </label>
+        <label class="option-chip" :class="{ active: selectedRelationType === 'many-to-many' }">
+          <input
+            type="radio"
+            name="relation-type-creation"
+            value="many-to-many"
+            :checked="selectedRelationType === 'many-to-many'"
+            @change="onRelationTypeChange"
+          >
+          Many to many
         </label>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { FRAME_STYLE, RECT_CORNER_RADIUS } from '@/board/constants'
-import type { BoardElement } from '@/board/types'
+import type { BoardElement, RelationType } from '@/board/types'
 
 export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end' | `break_${number}`
 
@@ -14,6 +14,13 @@ export interface ArrowPoint {
   y: number
 }
 
+interface LineSegment {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
 function toFiniteNumber(value: unknown, fallback = 0): number {
   const num = Number(value)
   return Number.isFinite(num) ? num : fallback
@@ -22,6 +29,63 @@ function toFiniteNumber(value: unknown, fallback = 0): number {
 function getArrowBreakCount(element: BoardElement): number {
   const raw = Math.round(toFiniteNumber(element.breaks, 0))
   return Math.max(0, Math.min(8, raw))
+}
+
+function getRelationType(element: BoardElement): RelationType {
+  const value = String(element.relationType || 'many-to-one')
+  if (value === 'one-to-one' || value === 'many-to-many') {
+    return value
+  }
+  return 'many-to-one'
+}
+
+function getRelationEndpointKind(type: RelationType, atStart: boolean): 'one' | 'many' {
+  if (type === 'one-to-one') {
+    return 'one'
+  }
+  if (type === 'many-to-many') {
+    return 'many'
+  }
+  return atStart ? 'many' : 'one'
+}
+
+function getRelationEndpointSegments(
+  tip: ArrowPoint,
+  inner: ArrowPoint,
+  kind: 'one' | 'many',
+): LineSegment[] {
+  const dx = tip.x - inner.x
+  const dy = tip.y - inner.y
+  const length = Math.hypot(dx, dy) || 1
+  const ux = dx / length
+  const uy = dy / length
+  const px = -uy
+  const py = ux
+
+  if (kind === 'one') {
+    const centerX = tip.x - ux * 4
+    const centerY = tip.y - uy * 4
+    const half = 5
+    return [
+      {
+        x1: centerX - px * half,
+        y1: centerY - py * half,
+        x2: centerX + px * half,
+        y2: centerY + py * half,
+      },
+    ]
+  }
+
+  const baseX = tip.x - ux * 10
+  const baseY = tip.y - uy * 10
+  const centerTipX = tip.x - ux * 1
+  const centerTipY = tip.y - uy * 1
+  const spread = 6
+  return [
+    { x1: baseX, y1: baseY, x2: centerTipX, y2: centerTipY },
+    { x1: baseX, y1: baseY, x2: centerTipX + px * spread, y2: centerTipY + py * spread },
+    { x1: baseX, y1: baseY, x2: centerTipX - px * spread, y2: centerTipY - py * spread },
+  ]
 }
 
 export function getArrowPathPoints(element: BoardElement): ArrowPoint[] {
@@ -144,15 +208,19 @@ export function getElementBounds(element: BoardElement, ctx: CanvasRenderingCont
   if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon' || element.type === 'frame') {
     return normalizeRect(element)
   }
-  if (element.type === 'arrow') {
+  if (element.type === 'arrow' || element.type === 'relation') {
     const points = getArrowPathPoints(element)
     const xs = points.map((point) => point.x)
     const ys = points.map((point) => point.y)
+    let padding = 0
+    if (element.type === 'relation') {
+      padding = 12
+    }
     return {
-      x: Math.min(...xs),
-      y: Math.min(...ys),
-      w: Math.max(...xs) - Math.min(...xs),
-      h: Math.max(...ys) - Math.min(...ys),
+      x: Math.min(...xs) - padding,
+      y: Math.min(...ys) - padding,
+      w: Math.max(...xs) - Math.min(...xs) + padding * 2,
+      h: Math.max(...ys) - Math.min(...ys) + padding * 2,
     }
   }
   if (element.type === 'text' && ctx) {
@@ -261,6 +329,41 @@ export function drawElement(
     ctx.closePath()
     ctx.fillStyle = String(element.stroke || '#1f2d54')
     ctx.fill()
+  }
+
+  if (element.type === 'relation') {
+    const points = getArrowPathPoints(element)
+    if (points.length < 2) {
+      ctx.restore()
+      return
+    }
+    const startPoint = points[0]!
+    const end = points[points.length - 1]!
+    const next = points[1]!
+    const prev = points[points.length - 2]!
+    ctx.beginPath()
+    ctx.moveTo(startPoint.x, startPoint.y)
+    for (let i = 1; i < points.length; i += 1) {
+      const point = points[i]!
+      ctx.lineTo(point.x, point.y)
+    }
+    ctx.stroke()
+
+    const relationType = getRelationType(element)
+    const startSegments = getRelationEndpointSegments(startPoint, next, getRelationEndpointKind(relationType, true))
+    const endSegments = getRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false))
+
+    ctx.save()
+    ctx.strokeStyle = String(element.stroke || '#1f2d54')
+    ctx.lineWidth = Number(element.strokeWidth || 2)
+    ctx.lineCap = 'round'
+    for (const segment of [...startSegments, ...endSegments]) {
+      ctx.beginPath()
+      ctx.moveTo(segment.x1, segment.y1)
+      ctx.lineTo(segment.x2, segment.y2)
+      ctx.stroke()
+    }
+    ctx.restore()
   }
 
   if (element.type === 'text') {
@@ -382,6 +485,35 @@ export function hitTestElement(
     return (
       distancePointToSegment(px, py, end.x, end.y, hx1, hy1) <= lineTolerance ||
       distancePointToSegment(px, py, end.x, end.y, hx2, hy2) <= lineTolerance
+    )
+  }
+
+  function isPointNearRelation(px: number, py: number, element: BoardElement): boolean {
+    const points = getArrowPathPoints(element)
+    if (points.length < 2) {
+      return false
+    }
+    const lineTolerance = Math.max(6, Number(element.strokeWidth || 2) + 4)
+
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const from = points[i]!
+      const to = points[i + 1]!
+      if (distancePointToSegment(px, py, from.x, from.y, to.x, to.y) <= lineTolerance) {
+        return true
+      }
+    }
+
+    const relationType = getRelationType(element)
+    const start = points[0]!
+    const next = points[1]!
+    const prev = points[points.length - 2]!
+    const end = points[points.length - 1]!
+    const endpointSegments = [
+      ...getRelationEndpointSegments(start, next, getRelationEndpointKind(relationType, true)),
+      ...getRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false)),
+    ]
+    return endpointSegments.some(
+      (segment) => distancePointToSegment(px, py, segment.x1, segment.y1, segment.x2, segment.y2) <= lineTolerance,
     )
   }
 
@@ -570,6 +702,13 @@ export function hitTestElement(
       continue
     }
 
+    if (element.type === 'relation') {
+      if (isPointNearRelation(x, y, element)) {
+        return element
+      }
+      continue
+    }
+
     if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
       return element
     }
@@ -578,7 +717,7 @@ export function hitTestElement(
 }
 
 export function getResizeHandles(element: BoardElement, ctx: CanvasRenderingContext2D | null): ResizeHandlePoint[] {
-  if (element.type === 'arrow') {
+  if (element.type === 'arrow' || element.type === 'relation') {
     const points = getArrowPathPoints(element)
     if (points.length < 2) {
       return []

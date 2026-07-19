@@ -128,6 +128,15 @@ body {
   margin: 0;
 }
 
+.toolset-select {
+  width: 100%;
+  height: 30px;
+  padding: 2px 8px;
+  margin-bottom: 10px;
+  background: #ffffff;
+  border-radius: 8px;
+}
+
 .header-actions {
   align-items: center;
 }
@@ -383,6 +392,10 @@ body {
   border-color: #7ca3e9;
   background: #dce9ff;
   color: #173b76;
+}
+
+.option-chip input[type='radio'] {
+  margin-right: 6px;
 }
 
 .canvas-wrap {

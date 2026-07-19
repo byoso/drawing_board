@@ -13,7 +13,7 @@ import {
   hitTestElement,
   type ResizeHandle,
 } from '@/board/canvas'
-import type { BoardElement } from '@/board/types'
+import type { BoardElement, RelationType, ToolSetId } from '@/board/types'
 import { useDrawingBoardStore } from '@/stores/drawingBoard'
 import { useSchemaHistory } from '@/composables/useSchemaHistory'
 import { createBoardShortcutsHandler } from '@/composables/useBoardShortcuts'
@@ -38,6 +38,9 @@ const isSpacePressed = ref(false)
 const lastCanvasPointer = ref({ x: 0, y: 0 })
 const newArrowBreaks = ref(0)
 const newArrowOrthogonal = ref(false)
+const newRelationBreaks = ref(2)
+const newRelationOrthogonal = ref(true)
+const newRelationType = ref<RelationType>('many-to-one')
 const iconImageCache = ref<Record<string, HTMLImageElement>>({})
 const pendingIconSetId = ref<string | null>(null)
 const iconUploadInputRef = ref<HTMLInputElement | null>(null)
@@ -858,7 +861,7 @@ function getSelectedColor(): string | null {
   if (selected.type === 'text') {
     return String(selected.color || '') || null
   }
-  if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow') {
+  if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow' || selected.type === 'relation') {
     return String(selected.stroke || '') || null
   }
   return null
@@ -872,7 +875,7 @@ function getSelectedLineStyle(): 'solid' | 'dashed' | null {
   if (!selected) {
     return null
   }
-  if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow') {
+  if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow' || selected.type === 'relation') {
     return selected.strokeStyle === 'dashed' ? 'dashed' : 'solid'
   }
   return null
@@ -885,37 +888,82 @@ function getSelectedSize(): 'small' | 'medium' | 'big' | null {
   return getSizeKeyFromElement(getSelectedElements()[0] || null)
 }
 
-function getSelectedArrow(): BoardElement | null {
+function isConnectorElement(element: BoardElement | null | undefined): boolean {
+  return Boolean(element && (element.type === 'arrow' || element.type === 'relation'))
+}
+
+function getSelectedConnector(): BoardElement | null {
   if (selectedElementIds.value.length !== 1) {
     return null
   }
   const selected = getSelectedElements()[0] || null
+  if (!isConnectorElement(selected)) {
+    return null
+  }
+  return selected
+}
+
+function getSelectedArrow(): BoardElement | null {
+  const selected = getSelectedConnector()
   if (!selected || selected.type !== 'arrow') {
     return null
   }
   return selected
 }
 
+function getSelectedRelation(): BoardElement | null {
+  const selected = getSelectedConnector()
+  if (!selected || selected.type !== 'relation') {
+    return null
+  }
+  return selected
+}
+
 function getSelectedArrowBreaks(): number {
-  const arrow = getSelectedArrow()
-  if (arrow) {
-    return Math.max(0, Math.min(8, Math.round(Number(arrow.breaks || 0))))
+  const connector = getSelectedConnector()
+  if (connector) {
+    return Math.max(0, Math.min(8, Math.round(Number(connector.breaks || 0))))
   }
   if (board.activeTool === 'arrow') {
     return Math.max(0, Math.min(8, Math.round(Number(newArrowBreaks.value || 0))))
+  }
+  if (board.activeTool === 'relation') {
+    return Math.max(0, Math.min(8, Math.round(Number(newRelationBreaks.value || 0))))
   }
   return 0
 }
 
 function getSelectedArrowOrthogonal(): boolean {
-  const arrow = getSelectedArrow()
-  if (arrow) {
-    return Boolean(arrow.orthogonal)
+  const connector = getSelectedConnector()
+  if (connector) {
+    return Boolean(connector.orthogonal)
   }
   if (board.activeTool === 'arrow') {
     return Boolean(newArrowOrthogonal.value)
   }
+  if (board.activeTool === 'relation') {
+    return Boolean(newRelationOrthogonal.value)
+  }
   return false
+}
+
+function getSelectedRelationType(): RelationType {
+  const relation = getSelectedRelation()
+  if (relation) {
+    return getSelectedRelationTypeFromElement(relation)
+  }
+  if (board.activeTool === 'relation') {
+    return newRelationType.value
+  }
+  return 'many-to-one'
+}
+
+function getSelectedRelationTypeFromElement(element: BoardElement): RelationType {
+  const value = String(element.relationType || 'many-to-one')
+  if (value === 'one-to-one' || value === 'many-to-many') {
+    return value
+  }
+  return 'many-to-one'
 }
 
 function ensureArrowBreakPoints(arrow: BoardElement, breakCount: number): Array<{ x: number; y: number }> {
@@ -978,17 +1026,22 @@ function getDefaultNewArrowBreakPoint(arrow: BoardElement): { x: number; y: numb
 }
 
 function shiftSelectedArrowBreaks(delta: number): void {
-  const arrow = getSelectedArrow()
-  if (!arrow) {
-    if (board.activeTool !== 'arrow') {
+  const connector = getSelectedConnector()
+  if (!connector) {
+    if (board.activeTool !== 'arrow' && board.activeTool !== 'relation') {
       return
     }
-    const next = Math.max(0, Math.min(8, newArrowBreaks.value + delta))
-    if (next === newArrowBreaks.value) {
+    const current = board.activeTool === 'relation' ? newRelationBreaks.value : newArrowBreaks.value
+    const next = Math.max(0, Math.min(8, current + delta))
+    if (next === current) {
       return
     }
-    newArrowBreaks.value = next
-    if (pointer.mode === 'draw' && draftElement.value?.type === 'arrow') {
+    if (board.activeTool === 'relation') {
+      newRelationBreaks.value = next
+    } else {
+      newArrowBreaks.value = next
+    }
+    if (pointer.mode === 'draw' && draftElement.value && isConnectorElement(draftElement.value)) {
       draftElement.value.breaks = next
       draftElement.value.breakPoints = getEvenlySpacedArrowBreakPoints(draftElement.value, next)
       renderCanvas()
@@ -1002,45 +1055,75 @@ function shiftSelectedArrowBreaks(delta: number): void {
   }
   pushHistoryCheckpoint()
   if (next > current) {
-    const points = ensureArrowBreakPoints(arrow, current)
-    points.push(getDefaultNewArrowBreakPoint({ ...arrow, breakPoints: points, breaks: current }))
-    arrow.breakPoints = points.slice(0, next)
+    const points = ensureArrowBreakPoints(connector, current)
+    points.push(getDefaultNewArrowBreakPoint({ ...connector, breakPoints: points, breaks: current }))
+    connector.breakPoints = points.slice(0, next)
   } else {
-    const points = ensureArrowBreakPoints(arrow, current)
-    arrow.breakPoints = points.slice(0, next)
+    const points = ensureArrowBreakPoints(connector, current)
+    connector.breakPoints = points.slice(0, next)
   }
-  arrow.breaks = next
+  connector.breaks = next
   markDirty()
   renderCanvas()
 }
 
 function setSelectedArrowOrthogonal(value: boolean): void {
-  const arrow = getSelectedArrow()
-  if (!arrow) {
-    if (board.activeTool !== 'arrow' || Boolean(newArrowOrthogonal.value) === value) {
+  const connector = getSelectedConnector()
+  if (!connector) {
+    if (board.activeTool !== 'arrow' && board.activeTool !== 'relation') {
       return
     }
-    newArrowOrthogonal.value = value
-    if (pointer.mode === 'draw' && draftElement.value?.type === 'arrow') {
+    const current = board.activeTool === 'relation' ? newRelationOrthogonal.value : newArrowOrthogonal.value
+    if (current === value) {
+      return
+    }
+    if (board.activeTool === 'relation') {
+      newRelationOrthogonal.value = value
+    } else {
+      newArrowOrthogonal.value = value
+    }
+    if (pointer.mode === 'draw' && draftElement.value && isConnectorElement(draftElement.value)) {
       draftElement.value.orthogonal = value
       renderCanvas()
     }
     return
   }
-  if (Boolean(arrow.orthogonal) === value) {
+  if (Boolean(connector.orthogonal) === value) {
     return
   }
   pushHistoryCheckpoint()
-  arrow.orthogonal = value
+  connector.orthogonal = value
+  markDirty()
+  renderCanvas()
+}
+
+function setSelectedRelationType(value: RelationType): void {
+  const relation = getSelectedRelation()
+  if (!relation) {
+    if (board.activeTool !== 'relation' || newRelationType.value === value) {
+      return
+    }
+    newRelationType.value = value
+    if (pointer.mode === 'draw' && draftElement.value?.type === 'relation') {
+      draftElement.value.relationType = value
+      renderCanvas()
+    }
+    return
+  }
+  if (relation.relationType === value) {
+    return
+  }
+  pushHistoryCheckpoint()
+  relation.relationType = value
   markDirty()
   renderCanvas()
 }
 
 function getApplicablePropertiesForSelection(): { hasColor: boolean; hasLineStyle: boolean; hasSize: boolean } {
   const elements = getSelectedElements()
-  const hasColor = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')
-  const hasLineStyle = elements.some((element) => element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')
-  const hasSize = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')
+  const hasColor = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation')
+  const hasLineStyle = elements.some((element) => element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation')
+  const hasSize = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation')
   return { hasColor, hasLineStyle, hasSize }
 }
 
@@ -1058,7 +1141,7 @@ function applyColorToSelection(color: string): void {
       element.color = color
       continue
     }
-    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow') {
+    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation') {
       element.stroke = color
       if (element.type === 'rect' || element.type === 'ellipse') {
         element.fill = hexToRgba(color, 0.22)
@@ -1079,7 +1162,7 @@ function applyLineStyle(style: 'solid' | 'dashed'): void {
     if (!idSet.has(element.id)) {
       continue
     }
-    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow') {
+    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation') {
       element.strokeStyle = style
     }
   }
@@ -1102,7 +1185,7 @@ function applySize(size: 'small' | 'medium' | 'big'): void {
       element.fontSize = preset.fontSize
       continue
     }
-    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow') {
+    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation') {
       element.strokeWidth = preset.strokeWidth
     }
   }
@@ -1299,6 +1382,57 @@ function toSvgNumber(value: unknown): number {
   return Math.round(num * 100) / 100
 }
 
+type Segment2D = { x1: number; y1: number; x2: number; y2: number }
+
+function getRelationEndpointKind(type: RelationType, atStart: boolean): 'one' | 'many' {
+  if (type === 'one-to-one') {
+    return 'one'
+  }
+  if (type === 'many-to-many') {
+    return 'many'
+  }
+  return atStart ? 'many' : 'one'
+}
+
+function buildRelationEndpointSegments(
+  tip: { x: number; y: number },
+  inner: { x: number; y: number },
+  kind: 'one' | 'many',
+): Segment2D[] {
+  const dx = tip.x - inner.x
+  const dy = tip.y - inner.y
+  const length = Math.hypot(dx, dy) || 1
+  const ux = dx / length
+  const uy = dy / length
+  const px = -uy
+  const py = ux
+
+  if (kind === 'one') {
+    const centerX = tip.x - ux * 4
+    const centerY = tip.y - uy * 4
+    const half = 5
+    return [
+      {
+        x1: centerX - px * half,
+        y1: centerY - py * half,
+        x2: centerX + px * half,
+        y2: centerY + py * half,
+      },
+    ]
+  }
+
+  const baseX = tip.x - ux * 10
+  const baseY = tip.y - uy * 10
+  const centerTipX = tip.x - ux * 1
+  const centerTipY = tip.y - uy * 1
+  const spread = 6
+  return [
+    { x1: baseX, y1: baseY, x2: centerTipX, y2: centerTipY },
+    { x1: baseX, y1: baseY, x2: centerTipX + px * spread, y2: centerTipY + py * spread },
+    { x1: baseX, y1: baseY, x2: centerTipX - px * spread, y2: centerTipY - py * spread },
+  ]
+}
+
 function buildSchemaSvgString(exportBounds: { x: number; y: number; w: number; h: number } | null = null): string | null {
   if (!board.activeSchema || board.activeSchema.elements.length === 0) {
     showToast('Nothing to export: diagram is empty.', 'error')
@@ -1386,6 +1520,37 @@ function buildSchemaSvgString(exportBounds: { x: number; y: number; w: number; h
       shapes.push(
         `<polygon points="${toSvgNumber(end.x)},${toSvgNumber(end.y)} ${toSvgNumber(hx1)},${toSvgNumber(hy1)} ${toSvgNumber(hx2)},${toSvgNumber(hy2)}" fill="${stroke}" />`,
       )
+      continue
+    }
+
+    if (element.type === 'relation') {
+      const points = getArrowPathPoints(element).map((point) => ({
+        x: Number(point.x) + translateX,
+        y: Number(point.y) + translateY,
+      }))
+      if (points.length < 2) {
+        continue
+      }
+      const stroke = escapeXml(element.stroke || '#1f2d54')
+      const widthValue = toSvgNumber(element.strokeWidth || 2)
+      const dash = getDashArrayFromStyle(element.strokeStyle)
+      const pointsAttr = points.map((point) => `${toSvgNumber(point.x)},${toSvgNumber(point.y)}`).join(' ')
+      shapes.push(
+        `<polyline points="${pointsAttr}" fill="none" stroke="${stroke}" stroke-width="${widthValue}" stroke-linejoin="round" stroke-linecap="round" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
+      )
+
+      const relationType = getSelectedRelationTypeFromElement(element)
+      const start = points[0]!
+      const next = points[1]!
+      const prev = points[points.length - 2]!
+      const end = points[points.length - 1]!
+      const startSegments = buildRelationEndpointSegments(start, next, getRelationEndpointKind(relationType, true))
+      const endSegments = buildRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false))
+      for (const segment of [...startSegments, ...endSegments]) {
+        shapes.push(
+          `<line x1="${toSvgNumber(segment.x1)}" y1="${toSvgNumber(segment.y1)}" x2="${toSvgNumber(segment.x2)}" y2="${toSvgNumber(segment.y2)}" stroke="${stroke}" stroke-width="${widthValue}" stroke-linecap="round" />`,
+        )
+      }
       continue
     }
 
@@ -1478,7 +1643,7 @@ function pasteClipboardSelection(): boolean {
     const dx = lastCanvasPointer.value.x - (sourceBounds.x + sourceBounds.w / 2)
     const dy = lastCanvasPointer.value.y - (sourceBounds.y + sourceBounds.h / 2)
     clones.forEach((element) => {
-      if (element.type === 'arrow') {
+      if (element.type === 'arrow' || element.type === 'relation') {
         element.x1 = Number(element.x1 || 0) + dx
         element.y1 = Number(element.y1 || 0) + dy
         element.x2 = Number(element.x2 || 0) + dx
@@ -1628,7 +1793,7 @@ function findSelectedElement(): BoardElement | null {
 }
 
 function applyResize(element: BoardElement, start: BoardElement, handle: ResizeHandle, x: number, y: number): void {
-  if (element.type === 'arrow') {
+  if (element.type === 'arrow' || element.type === 'relation') {
     const currentBreaks = Math.max(0, Math.min(8, Math.round(Number(element.breaks || 0))))
     let currentBreakPoints = ensureArrowBreakPoints(start, currentBreaks)
     if (handle === 'start') {
@@ -1823,6 +1988,24 @@ function createDraftForTool(pos: { x: number; y: number }): BoardElement | null 
     return draft
   }
 
+  if (board.activeTool === 'relation') {
+    const breaks = Math.max(0, Math.min(8, Math.round(Number(newRelationBreaks.value || 0))))
+    const draft: BoardElement = {
+      ...base,
+      type: 'relation',
+      x1: pos.x,
+      y1: pos.y,
+      x2: pos.x,
+      y2: pos.y,
+      breaks,
+      orthogonal: Boolean(newRelationOrthogonal.value),
+      relationType: newRelationType.value,
+      breakPoints: [],
+    }
+    draft.breakPoints = getEvenlySpacedArrowBreakPoints(draft, breaks)
+    return draft
+  }
+
   return null
 }
 
@@ -1952,7 +2135,7 @@ function onPointerMove(event: PointerEvent): void {
   lastCanvasPointer.value = pos
 
   if (pointer.mode === 'draw' && draftElement.value) {
-    if (draftElement.value.type === 'arrow') {
+    if (draftElement.value.type === 'arrow' || draftElement.value.type === 'relation') {
       draftElement.value.x2 = pos.x
       draftElement.value.y2 = pos.y
       const breaks = Math.max(0, Math.min(8, Math.round(Number(draftElement.value.breaks || 0))))
@@ -1989,7 +2172,7 @@ function onPointerMove(event: PointerEvent): void {
       if (!target || !start) {
         continue
       }
-      if (target.type === 'arrow') {
+      if (target.type === 'arrow' || target.type === 'relation') {
         target.x1 = Number(start.x1 || 0) + dx
         target.y1 = Number(start.y1 || 0) + dy
         target.x2 = Number(start.x2 || 0) + dx
@@ -2033,7 +2216,7 @@ function onPointerUp(): void {
 
   if (pointer.mode === 'draw' && draftElement.value) {
     let shouldAdd = true
-    if (draftElement.value.type === 'arrow') {
+    if (draftElement.value.type === 'arrow' || draftElement.value.type === 'relation') {
       const dx = Number(draftElement.value.x2 || 0) - Number(draftElement.value.x1 || 0)
       const dy = Number(draftElement.value.y2 || 0) - Number(draftElement.value.y1 || 0)
       shouldAdd = Math.hypot(dx, dy) > 5
@@ -2273,6 +2456,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 const shortcutsHandler = createBoardShortcutsHandler({
   getActiveTool: () => board.activeTool,
+  getActiveToolSet: () => board.activeToolSet,
   setActiveTool: (tool) => {
     board.activeTool = tool
   },
@@ -2320,6 +2504,10 @@ function onBeforeUnload(event: BeforeUnloadEvent): void {
   event.returnValue = ''
 }
 
+function onToolSetChange(toolSet: ToolSetId): void {
+  board.setActiveToolSet(toolSet)
+}
+
 onMounted(() => {
   board.init()
   board.store.schemas.forEach((schema) => seedSchemaHistory(schema.id, schema.elements))
@@ -2357,6 +2545,8 @@ onBeforeUnmount(() => {
 
       <div class="main-grid">
         <ToolsPanel
+          :tool-set-options="board.toolSetOptions"
+          :active-tool-set="board.activeToolSet"
           :tools="board.tools"
           :active-tool="board.activeTool"
           :color-palette="board.colorPalette"
@@ -2367,12 +2557,14 @@ onBeforeUnmount(() => {
           :show-properties="board.activeTool === 'select' && selectedElementIds.length > 0"
           :selected-count="selectedElementIds.length"
           :selected-is-frame="Boolean(getSelectedFrame())"
-          :selected-is-arrow="Boolean(getSelectedArrow())"
+          :selected-is-arrow-like="Boolean(getSelectedConnector())"
+          :selected-is-relation="Boolean(getSelectedRelation())"
           :selected-color="getSelectedColor()"
           :selected-line-style="getSelectedLineStyle()"
           :selected-size="getSelectedSize()"
           :selected-arrow-breaks="getSelectedArrowBreaks()"
           :selected-arrow-orthogonal="getSelectedArrowOrthogonal()"
+          :selected-relation-type="getSelectedRelationType()"
           :can-increment-arrow-breaks="getSelectedArrowBreaks() < 8"
           :can-decrement-arrow-breaks="getSelectedArrowBreaks() > 0"
           :has-color-property="getApplicablePropertiesForSelection().hasColor"
@@ -2383,6 +2575,7 @@ onBeforeUnmount(() => {
           :selected-frame-max-index="Math.max(1, getFramesForActiveSchema().length)"
           :can-shift-frame-index-down="canShiftSelectedFrameIndex(-1)"
           :can-shift-frame-index-up="canShiftSelectedFrameIndex(1)"
+          @select-tool-set="onToolSetChange"
           @select-tool="board.activeTool = $event"
           @set-active-color="board.activeColor = $event"
           @set-line-style="board.lineStyle = $event"
@@ -2392,6 +2585,7 @@ onBeforeUnmount(() => {
           @apply-size="applySize"
           @arrow-breaks-delta="shiftSelectedArrowBreaks"
           @arrow-orthogonal-change="setSelectedArrowOrthogonal"
+          @relation-type-change="setSelectedRelationType"
           @frame-name-change="onSelectedFrameNameChange"
           @frame-index-change="onSelectedFrameIndexInputChange"
           @frame-index-shift="shiftSelectedFrameIndex"

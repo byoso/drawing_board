@@ -2,17 +2,32 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { SCHEMA_VERSION } from '@/board/constants'
 import { loadBoardStore, persistBoardStore } from '@/board/storage'
-import type { BoardStoreData, Schema, ToolDef, ToolId } from '@/board/types'
+import type { BoardStoreData, Schema, ToolDef, ToolId, ToolSetId } from '@/board/types'
 import { uid } from '@/board/utils'
 
-const TOOLS: ToolDef[] = [
-  { id: 'select', label: 'Select', shortcut: 'S' },
-  { id: 'rect', label: 'Rectangle', shortcut: 'R' },
-  { id: 'ellipse', label: 'Ellipse', shortcut: 'E' },
-  { id: 'arrow', label: 'Arrow', shortcut: 'A' },
-  { id: 'frame', label: 'Frame', shortcut: 'F' },
-  { id: 'text', label: 'Text', shortcut: 'T' },
-]
+const SELECT_TOOL: ToolDef = { id: 'select', label: 'Select', shortcut: 'S' }
+
+const TOOL_SETS: Record<ToolSetId, ToolDef[]> = {
+  tools: [
+    SELECT_TOOL,
+    { id: 'rect', label: 'Rectangle', shortcut: 'R' },
+    { id: 'ellipse', label: 'Ellipse', shortcut: 'E' },
+    { id: 'arrow', label: 'Arrow', shortcut: 'A' },
+    { id: 'frame', label: 'Frame', shortcut: 'F' },
+    { id: 'text', label: 'Text', shortcut: 'T' },
+  ],
+  database: [
+    SELECT_TOOL,
+    { id: 'relation', label: 'Relation', shortcut: 'R' },
+  ],
+}
+
+function ensureToolSetContainsSelect(toolSet: ToolDef[]): ToolDef[] {
+  if (toolSet.some((tool) => tool.id === 'select')) {
+    return toolSet
+  }
+  return [SELECT_TOOL, ...toolSet]
+}
 
 function makeEmptySchema(name: string): Schema {
   const now = Date.now()
@@ -26,7 +41,16 @@ function makeEmptySchema(name: string): Schema {
 }
 
 export const useDrawingBoardStore = defineStore('drawing-board', () => {
-  const tools = ref<ToolDef[]>(TOOLS)
+  const toolSets = ref<Record<ToolSetId, ToolDef[]>>({
+    tools: ensureToolSetContainsSelect(TOOL_SETS.tools),
+    database: ensureToolSetContainsSelect(TOOL_SETS.database),
+  })
+  const activeToolSet = ref<ToolSetId>('tools')
+  const tools = computed<ToolDef[]>(() => toolSets.value[activeToolSet.value] || toolSets.value.tools)
+  const toolSetOptions = ref<Array<{ id: ToolSetId; label: string }>>([
+    { id: 'tools', label: 'Tools' },
+    { id: 'database', label: 'Database' },
+  ])
   const colorPalette = ref(['#6B8EEA', '#4FA8A6', '#6DAE6B', '#D0A15A', '#E08960', '#C481B9', '#8E91C8', '#7E8AA2'])
   const activeColor = ref('#6B8EEA')
   const lineStyle = ref<'solid' | 'dashed'>('solid')
@@ -64,6 +88,14 @@ export const useDrawingBoardStore = defineStore('drawing-board', () => {
 
   function persist(): void {
     persistBoardStore(store.value)
+  }
+
+  function setActiveToolSet(toolSet: ToolSetId): void {
+    if (!(toolSet in toolSets.value)) {
+      return
+    }
+    activeToolSet.value = toolSet
+    activeTool.value = 'select'
   }
 
   function activateSchema(schemaId: string): void {
@@ -124,6 +156,9 @@ export const useDrawingBoardStore = defineStore('drawing-board', () => {
 
   return {
     tools,
+    toolSets,
+    toolSetOptions,
+    activeToolSet,
     colorPalette,
     activeColor,
     lineStyle,
@@ -136,6 +171,7 @@ export const useDrawingBoardStore = defineStore('drawing-board', () => {
     sortedSchemas,
     init,
     persist,
+    setActiveToolSet,
     activateSchema,
     createSchema,
     saveCurrentSchema,

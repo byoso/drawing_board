@@ -1,7 +1,8 @@
-import type { ToolId } from '@/board/types'
+import type { ToolId, ToolSetId } from '@/board/types'
 
 type UseBoardShortcutsOptions = {
   getActiveTool: () => ToolId
+  getActiveToolSet: () => ToolSetId
   setActiveTool: (tool: ToolId) => void
   undo: () => void
   redo: () => void
@@ -64,8 +65,8 @@ export function createBoardShortcutsHandler(options: UseBoardShortcutsOptions) {
       return
     }
 
-    const basicShortcuts: Record<string, 'rect' | 'ellipse' | 'arrow' | 'frame' | 'text'> = {
-      r: 'rect',
+    const basicShortcuts: Record<string, 'rect' | 'ellipse' | 'arrow' | 'frame' | 'text' | 'relation'> = {
+      r: options.getActiveToolSet() === 'database' ? 'relation' : 'rect',
       e: 'ellipse',
       a: 'arrow',
       f: 'frame',
