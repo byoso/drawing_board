@@ -120,6 +120,22 @@ const pointer = reactive<{
 
 const zoomPercent = computed(() => Math.round(viewport.zoom * 100))
 const iconSets = computed(() => board.store.iconSets)
+const selectedElementId = computed<string | null>(() => {
+  if (selectedElementIds.value.length !== 1) {
+    return null
+  }
+  return selectedElementIds.value[0] || null
+})
+const framesBySchemaId = computed<Record<string, Array<{ id: string; label: string }>>>(() => {
+  const bySchema: Record<string, Array<{ id: string; label: string }>> = {}
+  for (const schema of board.store.schemas) {
+    bySchema[schema.id] = schema.elements
+      .filter((element) => element.type === 'frame')
+      .sort((a, b) => Number(a.frameIndex || 0) - Number(b.frameIndex || 0))
+      .map((frame) => ({ id: frame.id, label: board.getFrameDisplayName(frame) }))
+  }
+  return bySchema
+})
 const canvasCursor = computed(() => {
   if (pointer.mode === 'pan') {
     return 'grabbing'
@@ -1012,6 +1028,44 @@ function onSelectedFrameIndexInputChange(value: number): void {
     return
   }
   setSelectedFrameIndex(value)
+}
+
+function focusViewportOnBounds(bounds: { x: number; y: number; w: number; h: number }): void {
+  const canvas = canvasRef.value
+  if (!canvas) {
+    return
+  }
+  const canvasRect = canvas.getBoundingClientRect()
+  const canvasWidth = Math.max(1, canvasRect.width)
+  const canvasHeight = Math.max(1, canvasRect.height)
+  const padding = 20
+  const availableWidth = Math.max(1, canvasWidth - padding * 2)
+  const availableHeight = Math.max(1, canvasHeight - padding * 2)
+
+  const fitZoom = Math.min(availableWidth / Math.max(1, bounds.w), availableHeight / Math.max(1, bounds.h))
+  const targetZoom = clamp(Math.min(1, fitZoom), 0.1, 4)
+  viewport.zoom = targetZoom
+
+  const centerX = bounds.x + bounds.w / 2
+  const centerY = bounds.y + bounds.h / 2
+  viewport.offsetX = clamp(centerX - canvasWidth / (2 * targetZoom), 0, WORLD_WIDTH)
+  viewport.offsetY = clamp(centerY - canvasHeight / (2 * targetZoom), 0, WORLD_HEIGHT)
+}
+
+function focusFrame(frameId: string): void {
+  if (!board.activeSchema) {
+    return
+  }
+  const frame = board.activeSchema.elements.find((element) => element.id === frameId && element.type === 'frame')
+  if (!frame) {
+    return
+  }
+  const bounds = getElementBounds(frame, getCanvasContext())
+  if (bounds) {
+    focusViewportOnBounds(bounds)
+  }
+  setSingleSelection(frameId)
+  renderCanvas()
 }
 
 async function buildSchemaPngBlob(exportBounds: { x: number; y: number; w: number; h: number } | null = null): Promise<Blob | null> {
@@ -2152,10 +2206,13 @@ onBeforeUnmount(() => {
             :active-schema-id="board.store.activeSchemaId"
             :renaming-schema-id="renamingSchemaId"
             :rename-draft="renameDraft"
+            :frames-by-schema-id="framesBySchemaId"
+            :selected-element-id="selectedElementId"
             @select-schema="activateSchema"
             @start-rename="startRename"
             @commit-rename="commitRename"
             @delete-schema="deleteSchema"
+            @focus-frame="focusFrame"
             @update-rename-draft="renameDraft = $event"
           />
 

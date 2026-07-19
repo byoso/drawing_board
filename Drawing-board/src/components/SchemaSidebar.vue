@@ -5,11 +5,18 @@ interface SchemaListItem {
   updatedAt: number
 }
 
+interface SchemaFrameItem {
+  id: string
+  label: string
+}
+
 defineProps<{
   schemas: SchemaListItem[]
   activeSchemaId: string | null
   renamingSchemaId: string | null
   renameDraft: string
+  framesBySchemaId: Record<string, SchemaFrameItem[]>
+  selectedElementId: string | null
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +24,7 @@ const emit = defineEmits<{
   (e: 'start-rename', schema: SchemaListItem): void
   (e: 'commit-rename', schemaId: string): void
   (e: 'delete-schema', schemaId: string): void
+  (e: 'focus-frame', frameId: string): void
   (e: 'update-rename-draft', value: string): void
 }>()
 
@@ -56,6 +64,22 @@ function onRenameDraftInput(event: Event): void {
         <div class="schema-actions" @click.stop>
           <button class="button is-small ghost-btn" @click="emit('start-rename', schema)">Rename</button>
           <button class="button is-small danger-btn" @click="emit('delete-schema', schema.id)">Delete</button>
+        </div>
+
+        <div v-if="schema.id === activeSchemaId" class="schema-frames" @click.stop>
+          <p class="schema-frames-title">Frames</p>
+          <div v-if="(framesBySchemaId[schema.id] || []).length" class="schema-frames-list">
+            <button
+              v-for="frame in framesBySchemaId[schema.id]"
+              :key="frame.id"
+              class="schema-frame-row"
+              :class="{ active: selectedElementId === frame.id }"
+              @click.stop="emit('focus-frame', frame.id)"
+            >
+              <strong>{{ frame.label }}</strong>
+            </button>
+          </div>
+          <p v-else class="schema-frames-empty">No frames yet</p>
         </div>
       </article>
     </div>
