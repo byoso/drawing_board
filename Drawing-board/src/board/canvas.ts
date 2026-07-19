@@ -1,12 +1,108 @@
 import { FRAME_STYLE, RECT_CORNER_RADIUS } from '@/board/constants'
 import type { BoardElement } from '@/board/types'
 
-export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end'
+export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end' | `break_${number}`
 
 export interface ResizeHandlePoint {
   handle: ResizeHandle
   x: number
   y: number
+}
+
+export interface ArrowPoint {
+  x: number
+  y: number
+}
+
+function toFiniteNumber(value: unknown, fallback = 0): number {
+  const num = Number(value)
+  return Number.isFinite(num) ? num : fallback
+}
+
+function getArrowBreakCount(element: BoardElement): number {
+  const raw = Math.round(toFiniteNumber(element.breaks, 0))
+  return Math.max(0, Math.min(8, raw))
+}
+
+export function getArrowPathPoints(element: BoardElement): ArrowPoint[] {
+  const start = {
+    x: toFiniteNumber(element.x1, 0),
+    y: toFiniteNumber(element.y1, 0),
+  }
+  const end = {
+    x: toFiniteNumber(element.x2, 0),
+    y: toFiniteNumber(element.y2, 0),
+  }
+  const breakCount = getArrowBreakCount(element)
+  const source = Array.isArray(element.breakPoints) ? element.breakPoints : []
+  const breaks: ArrowPoint[] = []
+
+  for (let i = 0; i < breakCount; i += 1) {
+    const raw = source[i]
+    if (raw && typeof raw === 'object') {
+      breaks.push({ x: toFiniteNumber(raw.x, start.x), y: toFiniteNumber(raw.y, start.y) })
+      continue
+    }
+    const t = (i + 1) / (breakCount + 1)
+    breaks.push({
+      x: start.x + (end.x - start.x) * t,
+      y: start.y + (end.y - start.y) * t,
+    })
+  }
+
+  const legacyForceSquare = (element as { forceSquarePath?: unknown }).forceSquarePath
+  const isOrthogonal = Boolean(element.orthogonal ?? legacyForceSquare)
+  if (!isOrthogonal || breaks.length === 0) {
+    return [start, ...breaks, end]
+  }
+
+  const orthogonalBreaks: ArrowPoint[] = []
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  // If endpoints are aligned, start on the opposite axis so 2+ breaks form a visible dogleg.
+  let horizontalSegment = Math.abs(dx) >= Math.abs(dy)
+  if (breaks.length > 1) {
+    if (Math.abs(dy) < 0.0001) {
+      horizontalSegment = false
+    } else if (Math.abs(dx) < 0.0001) {
+      horizontalSegment = true
+    }
+  }
+
+  const distanceSquared = (a: ArrowPoint, b: ArrowPoint): number => {
+    const ddx = a.x - b.x
+    const ddy = a.y - b.y
+    return ddx * ddx + ddy * ddy
+  }
+
+  for (let i = 0; i < breaks.length; i += 1) {
+    const previous = i === 0 ? start : orthogonalBreaks[i - 1]!
+    const raw = breaks[i]!
+    const isLastBreak = i === breaks.length - 1
+
+    if (!isLastBreak) {
+      if (horizontalSegment) {
+        orthogonalBreaks.push({ x: raw.x, y: previous.y })
+      } else {
+        orthogonalBreaks.push({ x: previous.x, y: raw.y })
+      }
+      horizontalSegment = !horizontalSegment
+      continue
+    }
+
+    const candidateVerticalToEnd: ArrowPoint = { x: end.x, y: previous.y }
+    const candidateHorizontalToEnd: ArrowPoint = { x: previous.x, y: end.y }
+    const scoreVerticalToEnd = distanceSquared(previous, candidateVerticalToEnd) + distanceSquared(candidateVerticalToEnd, end)
+    const scoreHorizontalToEnd = distanceSquared(previous, candidateHorizontalToEnd) + distanceSquared(candidateHorizontalToEnd, end)
+
+    if (scoreVerticalToEnd === scoreHorizontalToEnd) {
+      orthogonalBreaks.push(horizontalSegment ? candidateVerticalToEnd : candidateHorizontalToEnd)
+    } else {
+      orthogonalBreaks.push(scoreVerticalToEnd > scoreHorizontalToEnd ? candidateVerticalToEnd : candidateHorizontalToEnd)
+    }
+  }
+
+  return [start, ...orthogonalBreaks, end]
 }
 
 export function normalizeRect(el: { x?: number; y?: number; w?: number; h?: number }) {
@@ -49,15 +145,14 @@ export function getElementBounds(element: BoardElement, ctx: CanvasRenderingCont
     return normalizeRect(element)
   }
   if (element.type === 'arrow') {
-    const x1 = Number(element.x1 || 0)
-    const y1 = Number(element.y1 || 0)
-    const x2 = Number(element.x2 || 0)
-    const y2 = Number(element.y2 || 0)
+    const points = getArrowPathPoints(element)
+    const xs = points.map((point) => point.x)
+    const ys = points.map((point) => point.y)
     return {
-      x: Math.min(x1, x2),
-      y: Math.min(y1, y2),
-      w: Math.abs(x2 - x1),
-      h: Math.abs(y2 - y1),
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs),
+      h: Math.max(...ys) - Math.min(...ys),
     }
   }
   if (element.type === 'text' && ctx) {
@@ -141,21 +236,28 @@ export function drawElement(
   }
 
   if (element.type === 'arrow') {
-    const x1 = Number(element.x1 || 0)
-    const y1 = Number(element.y1 || 0)
-    const x2 = Number(element.x2 || 0)
-    const y2 = Number(element.y2 || 0)
+    const points = getArrowPathPoints(element)
+    if (points.length < 2) {
+      ctx.restore()
+      return
+    }
+    const startPoint = points[0]!
+    const end = points[points.length - 1]!
+    const prev = points[points.length - 2]!
     ctx.beginPath()
-    ctx.moveTo(x1, y1)
-    ctx.lineTo(x2, y2)
+    ctx.moveTo(startPoint.x, startPoint.y)
+    for (let i = 1; i < points.length; i += 1) {
+      const point = points[i]!
+      ctx.lineTo(point.x, point.y)
+    }
     ctx.stroke()
 
-    const angle = Math.atan2(y2 - y1, x2 - x1)
+    const angle = Math.atan2(end.y - prev.y, end.x - prev.x)
     const size = 12
     ctx.beginPath()
-    ctx.moveTo(x2, y2)
-    ctx.lineTo(x2 - size * Math.cos(angle - Math.PI / 6), y2 - size * Math.sin(angle - Math.PI / 6))
-    ctx.lineTo(x2 - size * Math.cos(angle + Math.PI / 6), y2 - size * Math.sin(angle + Math.PI / 6))
+    ctx.moveTo(end.x, end.y)
+    ctx.lineTo(end.x - size * Math.cos(angle - Math.PI / 6), end.y - size * Math.sin(angle - Math.PI / 6))
+    ctx.lineTo(end.x - size * Math.cos(angle + Math.PI / 6), end.y - size * Math.sin(angle + Math.PI / 6))
     ctx.closePath()
     ctx.fillStyle = String(element.stroke || '#1f2d54')
     ctx.fill()
@@ -250,30 +352,36 @@ export function hitTestElement(
   }
 
   function isPointNearArrow(px: number, py: number, element: BoardElement): boolean {
-    const x1 = Number(element.x1 || 0)
-    const y1 = Number(element.y1 || 0)
-    const x2 = Number(element.x2 || 0)
-    const y2 = Number(element.y2 || 0)
+    const points = getArrowPathPoints(element)
+    if (points.length < 2) {
+      return false
+    }
+    const end = points[points.length - 1]!
+    const prev = points[points.length - 2]!
     const lineTolerance = Math.max(6, Number(element.strokeWidth || 2) + 4)
 
-    if (distancePointToSegment(px, py, x1, y1, x2, y2) <= lineTolerance) {
-      return true
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const from = points[i]!
+      const to = points[i + 1]!
+      if (distancePointToSegment(px, py, from.x, from.y, to.x, to.y) <= lineTolerance) {
+        return true
+      }
     }
 
-    const angle = Math.atan2(y2 - y1, x2 - x1)
+    const angle = Math.atan2(end.y - prev.y, end.x - prev.x)
     const size = 12
-    const hx1 = x2 - size * Math.cos(angle - Math.PI / 6)
-    const hy1 = y2 - size * Math.sin(angle - Math.PI / 6)
-    const hx2 = x2 - size * Math.cos(angle + Math.PI / 6)
-    const hy2 = y2 - size * Math.sin(angle + Math.PI / 6)
+    const hx1 = end.x - size * Math.cos(angle - Math.PI / 6)
+    const hy1 = end.y - size * Math.sin(angle - Math.PI / 6)
+    const hx2 = end.x - size * Math.cos(angle + Math.PI / 6)
+    const hy2 = end.y - size * Math.sin(angle + Math.PI / 6)
 
-    if (isPointInTriangle(px, py, x2, y2, hx1, hy1, hx2, hy2)) {
+    if (isPointInTriangle(px, py, end.x, end.y, hx1, hy1, hx2, hy2)) {
       return true
     }
 
     return (
-      distancePointToSegment(px, py, x2, y2, hx1, hy1) <= lineTolerance ||
-      distancePointToSegment(px, py, x2, y2, hx2, hy2) <= lineTolerance
+      distancePointToSegment(px, py, end.x, end.y, hx1, hy1) <= lineTolerance ||
+      distancePointToSegment(px, py, end.x, end.y, hx2, hy2) <= lineTolerance
     )
   }
 
@@ -471,10 +579,16 @@ export function hitTestElement(
 
 export function getResizeHandles(element: BoardElement, ctx: CanvasRenderingContext2D | null): ResizeHandlePoint[] {
   if (element.type === 'arrow') {
-    return [
-      { handle: 'start', x: Number(element.x1 || 0), y: Number(element.y1 || 0) },
-      { handle: 'end', x: Number(element.x2 || 0), y: Number(element.y2 || 0) },
-    ]
+    const points = getArrowPathPoints(element)
+    if (points.length < 2) {
+      return []
+    }
+    const handles: ResizeHandlePoint[] = [{ handle: 'start', x: points[0]!.x, y: points[0]!.y }]
+    for (let i = 1; i < points.length - 1; i += 1) {
+      handles.push({ handle: `break_${i - 1}`, x: points[i]!.x, y: points[i]!.y })
+    }
+    handles.push({ handle: 'end', x: points[points.length - 1]!.x, y: points[points.length - 1]!.y })
+    return handles
   }
 
   if (element.type === 'text') {

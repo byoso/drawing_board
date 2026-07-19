@@ -12,9 +12,14 @@ defineProps<{
   showProperties: boolean
   selectedCount: number
   selectedIsFrame: boolean
+  selectedIsArrow: boolean
   selectedColor: string | null
   selectedLineStyle: 'solid' | 'dashed' | null
   selectedSize: 'small' | 'medium' | 'big' | null
+  selectedArrowBreaks: number
+  selectedArrowOrthogonal: boolean
+  canIncrementArrowBreaks: boolean
+  canDecrementArrowBreaks: boolean
   hasColorProperty: boolean
   hasLineStyleProperty: boolean
   hasSizeProperty: boolean
@@ -33,6 +38,8 @@ const emit = defineEmits<{
   (e: 'apply-color', color: string): void
   (e: 'apply-line-style', style: 'solid' | 'dashed'): void
   (e: 'apply-size', size: 'small' | 'medium' | 'big'): void
+  (e: 'arrow-breaks-delta', delta: number): void
+  (e: 'arrow-orthogonal-change', value: boolean): void
   (e: 'frame-name-change', value: string): void
   (e: 'frame-index-change', value: number): void
   (e: 'frame-index-shift', delta: number): void
@@ -49,6 +56,11 @@ function onFrameIndexChange(event: Event): void {
   if (Number.isFinite(parsed) && parsed > 0) {
     emit('frame-index-change', parsed)
   }
+}
+
+function onArrowOrthogonalChange(event: Event): void {
+  const target = event.target as HTMLInputElement | null
+  emit('arrow-orthogonal-change', Boolean(target?.checked))
 }
 </script>
 
@@ -173,6 +185,50 @@ function onFrameIndexChange(event: Event): void {
             {{ size }}
           </button>
         </div>
+      </div>
+
+      <div v-if="selectedIsArrow" class="options-row">
+        <p class="palette-title">Breaks</p>
+        <div class="frame-index-row">
+          <button class="option-chip" :disabled="!canDecrementArrowBreaks" @click="emit('arrow-breaks-delta', -1)">-</button>
+          <span class="layer-info">{{ selectedArrowBreaks }}</span>
+          <button class="option-chip" :disabled="!canIncrementArrowBreaks" @click="emit('arrow-breaks-delta', 1)">+</button>
+        </div>
+      </div>
+
+      <div v-if="selectedIsArrow" class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedArrowOrthogonal"
+            @change="onArrowOrthogonalChange"
+          >
+          Orthogonal
+        </label>
+      </div>
+    </div>
+
+    <div v-if="activeTool === 'arrow' && !showProperties" class="element-properties" aria-label="Arrow properties">
+      <p class="palette-title">Arrow</p>
+
+      <div class="options-row">
+        <p class="palette-title">Breaks</p>
+        <div class="frame-index-row">
+          <button class="option-chip" :disabled="!canDecrementArrowBreaks" @click="emit('arrow-breaks-delta', -1)">-</button>
+          <span class="layer-info">{{ selectedArrowBreaks }}</span>
+          <button class="option-chip" :disabled="!canIncrementArrowBreaks" @click="emit('arrow-breaks-delta', 1)">+</button>
+        </div>
+      </div>
+
+      <div class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedArrowOrthogonal"
+            @change="onArrowOrthogonalChange"
+          >
+          Orthogonal
+        </label>
       </div>
     </div>
   </aside>

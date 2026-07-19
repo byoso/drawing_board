@@ -6,6 +6,7 @@ import { FRAME_STYLE, RECT_CORNER_RADIUS, WORLD_HEIGHT, WORLD_WIDTH } from '@/bo
 import {
   drawElement,
   drawResizeHandles,
+  getArrowPathPoints,
   getElementBounds,
   getResizeHandles,
   hitResizeHandle,
@@ -35,6 +36,8 @@ const copiedElements = ref<BoardElement[]>([])
 const isPointerInCanvas = ref(false)
 const isSpacePressed = ref(false)
 const lastCanvasPointer = ref({ x: 0, y: 0 })
+const newArrowBreaks = ref(0)
+const newArrowOrthogonal = ref(false)
 const iconImageCache = ref<Record<string, HTMLImageElement>>({})
 const pendingIconSetId = ref<string | null>(null)
 const iconUploadInputRef = ref<HTMLInputElement | null>(null)
@@ -882,6 +885,157 @@ function getSelectedSize(): 'small' | 'medium' | 'big' | null {
   return getSizeKeyFromElement(getSelectedElements()[0] || null)
 }
 
+function getSelectedArrow(): BoardElement | null {
+  if (selectedElementIds.value.length !== 1) {
+    return null
+  }
+  const selected = getSelectedElements()[0] || null
+  if (!selected || selected.type !== 'arrow') {
+    return null
+  }
+  return selected
+}
+
+function getSelectedArrowBreaks(): number {
+  const arrow = getSelectedArrow()
+  if (arrow) {
+    return Math.max(0, Math.min(8, Math.round(Number(arrow.breaks || 0))))
+  }
+  if (board.activeTool === 'arrow') {
+    return Math.max(0, Math.min(8, Math.round(Number(newArrowBreaks.value || 0))))
+  }
+  return 0
+}
+
+function getSelectedArrowOrthogonal(): boolean {
+  const arrow = getSelectedArrow()
+  if (arrow) {
+    return Boolean(arrow.orthogonal)
+  }
+  if (board.activeTool === 'arrow') {
+    return Boolean(newArrowOrthogonal.value)
+  }
+  return false
+}
+
+function ensureArrowBreakPoints(arrow: BoardElement, breakCount: number): Array<{ x: number; y: number }> {
+  const normalizedCount = Math.max(0, Math.min(8, Math.round(Number(breakCount || 0))))
+  const source = Array.isArray(arrow.breakPoints) ? arrow.breakPoints : []
+  const points: Array<{ x: number; y: number }> = []
+  for (let i = 0; i < normalizedCount; i += 1) {
+    const raw = source[i]
+    if (raw && typeof raw === 'object') {
+      points.push({ x: Number(raw.x || 0), y: Number(raw.y || 0) })
+      continue
+    }
+    const path = getArrowPathPoints({ ...arrow, breakPoints: points, breaks: normalizedCount })
+    const start = path[0]!
+    const end = path[path.length - 1]!
+    points.push({ x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 })
+  }
+  return points
+}
+
+function getEvenlySpacedArrowBreakPoints(arrow: BoardElement, breakCount: number): Array<{ x: number; y: number }> {
+  const normalizedCount = Math.max(0, Math.min(8, Math.round(Number(breakCount || 0))))
+  if (normalizedCount <= 0) {
+    return []
+  }
+  const startX = Number(arrow.x1 || 0)
+  const startY = Number(arrow.y1 || 0)
+  const endX = Number(arrow.x2 || 0)
+  const endY = Number(arrow.y2 || 0)
+  const points: Array<{ x: number; y: number }> = []
+  for (let i = 0; i < normalizedCount; i += 1) {
+    const t = (i + 1) / (normalizedCount + 1)
+    points.push({
+      x: startX + (endX - startX) * t,
+      y: startY + (endY - startY) * t,
+    })
+  }
+  return points
+}
+
+function getDefaultNewArrowBreakPoint(arrow: BoardElement): { x: number; y: number } {
+  const path = getArrowPathPoints(arrow)
+  let bestFrom = path[0]!
+  let bestTo = path[path.length - 1]!
+  let bestLength = -1
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const from = path[i]!
+    const to = path[i + 1]!
+    const length = Math.hypot(to.x - from.x, to.y - from.y)
+    if (length > bestLength) {
+      bestLength = length
+      bestFrom = from
+      bestTo = to
+    }
+  }
+  return {
+    x: (bestFrom.x + bestTo.x) / 2,
+    y: (bestFrom.y + bestTo.y) / 2,
+  }
+}
+
+function shiftSelectedArrowBreaks(delta: number): void {
+  const arrow = getSelectedArrow()
+  if (!arrow) {
+    if (board.activeTool !== 'arrow') {
+      return
+    }
+    const next = Math.max(0, Math.min(8, newArrowBreaks.value + delta))
+    if (next === newArrowBreaks.value) {
+      return
+    }
+    newArrowBreaks.value = next
+    if (pointer.mode === 'draw' && draftElement.value?.type === 'arrow') {
+      draftElement.value.breaks = next
+      draftElement.value.breakPoints = getEvenlySpacedArrowBreakPoints(draftElement.value, next)
+      renderCanvas()
+    }
+    return
+  }
+  const current = getSelectedArrowBreaks()
+  const next = Math.max(0, Math.min(8, current + delta))
+  if (next === current) {
+    return
+  }
+  pushHistoryCheckpoint()
+  if (next > current) {
+    const points = ensureArrowBreakPoints(arrow, current)
+    points.push(getDefaultNewArrowBreakPoint({ ...arrow, breakPoints: points, breaks: current }))
+    arrow.breakPoints = points.slice(0, next)
+  } else {
+    const points = ensureArrowBreakPoints(arrow, current)
+    arrow.breakPoints = points.slice(0, next)
+  }
+  arrow.breaks = next
+  markDirty()
+  renderCanvas()
+}
+
+function setSelectedArrowOrthogonal(value: boolean): void {
+  const arrow = getSelectedArrow()
+  if (!arrow) {
+    if (board.activeTool !== 'arrow' || Boolean(newArrowOrthogonal.value) === value) {
+      return
+    }
+    newArrowOrthogonal.value = value
+    if (pointer.mode === 'draw' && draftElement.value?.type === 'arrow') {
+      draftElement.value.orthogonal = value
+      renderCanvas()
+    }
+    return
+  }
+  if (Boolean(arrow.orthogonal) === value) {
+    return
+  }
+  pushHistoryCheckpoint()
+  arrow.orthogonal = value
+  markDirty()
+  renderCanvas()
+}
+
 function getApplicablePropertiesForSelection(): { hasColor: boolean; hasLineStyle: boolean; hasSize: boolean } {
   const elements = getSelectedElements()
   const hasColor = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')
@@ -1206,15 +1360,31 @@ function buildSchemaSvgString(exportBounds: { x: number; y: number; w: number; h
     }
 
     if (element.type === 'arrow') {
-      const x1 = toSvgNumber(Number(element.x1 || 0) + translateX)
-      const y1 = toSvgNumber(Number(element.y1 || 0) + translateY)
-      const x2 = toSvgNumber(Number(element.x2 || 0) + translateX)
-      const y2 = toSvgNumber(Number(element.y2 || 0) + translateY)
+      const points = getArrowPathPoints(element).map((point) => ({
+        x: Number(point.x) + translateX,
+        y: Number(point.y) + translateY,
+      }))
+      if (points.length < 2) {
+        continue
+      }
       const stroke = escapeXml(element.stroke || '#1f2d54')
       const widthValue = toSvgNumber(element.strokeWidth || 2)
       const dash = getDashArrayFromStyle(element.strokeStyle)
+      const pointsAttr = points.map((point) => `${toSvgNumber(point.x)},${toSvgNumber(point.y)}`).join(' ')
       shapes.push(
-        `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${widthValue}" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
+        `<polyline points="${pointsAttr}" fill="none" stroke="${stroke}" stroke-width="${widthValue}" stroke-linejoin="round" stroke-linecap="round" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
+      )
+
+      const end = points[points.length - 1]!
+      const prev = points[points.length - 2]!
+      const angle = Math.atan2(end.y - prev.y, end.x - prev.x)
+      const headSize = 12
+      const hx1 = end.x - headSize * Math.cos(angle - Math.PI / 6)
+      const hy1 = end.y - headSize * Math.sin(angle - Math.PI / 6)
+      const hx2 = end.x - headSize * Math.cos(angle + Math.PI / 6)
+      const hy2 = end.y - headSize * Math.sin(angle + Math.PI / 6)
+      shapes.push(
+        `<polygon points="${toSvgNumber(end.x)},${toSvgNumber(end.y)} ${toSvgNumber(hx1)},${toSvgNumber(hy1)} ${toSvgNumber(hx2)},${toSvgNumber(hy2)}" fill="${stroke}" />`,
       )
       continue
     }
@@ -1313,6 +1483,12 @@ function pasteClipboardSelection(): boolean {
         element.y1 = Number(element.y1 || 0) + dy
         element.x2 = Number(element.x2 || 0) + dx
         element.y2 = Number(element.y2 || 0) + dy
+        if (Array.isArray(element.breakPoints)) {
+          element.breakPoints = element.breakPoints.map((point) => ({
+            x: Number(point?.x || 0) + dx,
+            y: Number(point?.y || 0) + dy,
+          }))
+        }
       } else {
         element.x = Number(element.x || 0) + dx
         element.y = Number(element.y || 0) + dy
@@ -1453,13 +1629,64 @@ function findSelectedElement(): BoardElement | null {
 
 function applyResize(element: BoardElement, start: BoardElement, handle: ResizeHandle, x: number, y: number): void {
   if (element.type === 'arrow') {
+    const currentBreaks = Math.max(0, Math.min(8, Math.round(Number(element.breaks || 0))))
+    let currentBreakPoints = ensureArrowBreakPoints(start, currentBreaks)
     if (handle === 'start') {
       element.x1 = x
       element.y1 = y
     } else if (handle === 'end') {
       element.x2 = x
       element.y2 = y
+    } else if (String(handle).startsWith('break_')) {
+      const index = Number.parseInt(String(handle).replace('break_', ''), 10)
+      if (Number.isFinite(index) && index >= 0 && index < currentBreakPoints.length) {
+        const legacyForceSquare = (start as { forceSquarePath?: unknown }).forceSquarePath
+        const isOrthogonal = Boolean(start.orthogonal ?? legacyForceSquare)
+
+        if (!isOrthogonal) {
+          currentBreakPoints[index] = { x, y }
+        } else {
+          const points = getArrowPathPoints(start)
+          const pathBreaks = points.slice(1, -1).map((point) => ({ x: point.x, y: point.y }))
+
+          if (index < pathBreaks.length) {
+            pathBreaks[index] = { x, y }
+
+            const isHorizontalSegment = (from: { x: number; y: number }, to: { x: number; y: number }): boolean => {
+              return Math.abs(to.x - from.x) >= Math.abs(to.y - from.y)
+            }
+
+            const pathIndex = index + 1
+            const previousPathPoint = points[pathIndex - 1]!
+            const currentPathPoint = points[pathIndex]!
+            const nextPathPoint = points[pathIndex + 1]!
+
+            const incomingIsHorizontal = isHorizontalSegment(previousPathPoint, currentPathPoint)
+            const outgoingIsHorizontal = isHorizontalSegment(currentPathPoint, nextPathPoint)
+
+            if (index - 1 >= 0) {
+              if (incomingIsHorizontal) {
+                pathBreaks[index - 1]!.y = y
+              } else {
+                pathBreaks[index - 1]!.x = x
+              }
+            }
+
+            if (index + 1 < pathBreaks.length) {
+              if (outgoingIsHorizontal) {
+                pathBreaks[index + 1]!.y = y
+              } else {
+                pathBreaks[index + 1]!.x = x
+              }
+            }
+
+            currentBreakPoints = pathBreaks
+          }
+        }
+      }
     }
+    element.breaks = currentBreaks
+    element.breakPoints = currentBreakPoints
     return
   }
 
@@ -1529,33 +1756,7 @@ function updateSelectionFromMarquee(): void {
   const ctx = getCanvasContext()
   const ids = board.activeSchema.elements
     .filter((element) => {
-      const bounds = element.type
-        ? {
-            x: Number(element.x || Math.min(Number(element.x1 || 0), Number(element.x2 || 0))),
-            y: Number(element.y || Math.min(Number(element.y1 || 0), Number(element.y2 || 0))),
-            w:
-              element.type === 'arrow'
-                ? Math.abs(Number(element.x2 || 0) - Number(element.x1 || 0))
-                : Math.abs(Number(element.w || 0)),
-            h:
-              element.type === 'arrow'
-                ? Math.abs(Number(element.y2 || 0) - Number(element.y1 || 0))
-                : Math.abs(Number(element.h || 0)),
-          }
-        : null
-
-      if (element.type === 'text' && ctx) {
-        ctx.save()
-        const fontSize = Number(element.fontSize || 18)
-        ctx.font = `${fontSize}px Space Grotesk`
-        const width = ctx.measureText(String(element.text || '')).width
-        ctx.restore()
-        return isBoundsInsideMarquee(
-          { x: Number(element.x || 0), y: Number(element.y || 0) - fontSize, w: Math.max(width, 1), h: fontSize * 1.2 },
-          marqueeRect.value,
-        )
-      }
-
+      const bounds = getElementBounds(element, ctx)
       return isBoundsInsideMarquee(bounds, marqueeRect.value)
     })
     .map((element) => element.id)
@@ -1606,14 +1807,20 @@ function createDraftForTool(pos: { x: number; y: number }): BoardElement | null 
   }
 
   if (board.activeTool === 'arrow') {
-    return {
+    const breaks = Math.max(0, Math.min(8, Math.round(Number(newArrowBreaks.value || 0))))
+    const draft: BoardElement = {
       ...base,
       type: 'arrow',
       x1: pos.x,
       y1: pos.y,
       x2: pos.x,
       y2: pos.y,
+      breaks,
+      orthogonal: Boolean(newArrowOrthogonal.value),
+      breakPoints: [],
     }
+    draft.breakPoints = getEvenlySpacedArrowBreakPoints(draft, breaks)
+    return draft
   }
 
   return null
@@ -1748,6 +1955,8 @@ function onPointerMove(event: PointerEvent): void {
     if (draftElement.value.type === 'arrow') {
       draftElement.value.x2 = pos.x
       draftElement.value.y2 = pos.y
+      const breaks = Math.max(0, Math.min(8, Math.round(Number(draftElement.value.breaks || 0))))
+      draftElement.value.breakPoints = getEvenlySpacedArrowBreakPoints(draftElement.value, breaks)
     } else {
       draftElement.value.w = pos.x - pointer.startX
       draftElement.value.h = pos.y - pointer.startY
@@ -1785,6 +1994,12 @@ function onPointerMove(event: PointerEvent): void {
         target.y1 = Number(start.y1 || 0) + dy
         target.x2 = Number(start.x2 || 0) + dx
         target.y2 = Number(start.y2 || 0) + dy
+        if (Array.isArray(start.breakPoints)) {
+          target.breakPoints = start.breakPoints.map((point) => ({
+            x: Number(point?.x || 0) + dx,
+            y: Number(point?.y || 0) + dy,
+          }))
+        }
       } else {
         target.x = Number(start.x || 0) + dx
         target.y = Number(start.y || 0) + dy
@@ -2152,9 +2367,14 @@ onBeforeUnmount(() => {
           :show-properties="board.activeTool === 'select' && selectedElementIds.length > 0"
           :selected-count="selectedElementIds.length"
           :selected-is-frame="Boolean(getSelectedFrame())"
+          :selected-is-arrow="Boolean(getSelectedArrow())"
           :selected-color="getSelectedColor()"
           :selected-line-style="getSelectedLineStyle()"
           :selected-size="getSelectedSize()"
+          :selected-arrow-breaks="getSelectedArrowBreaks()"
+          :selected-arrow-orthogonal="getSelectedArrowOrthogonal()"
+          :can-increment-arrow-breaks="getSelectedArrowBreaks() < 8"
+          :can-decrement-arrow-breaks="getSelectedArrowBreaks() > 0"
           :has-color-property="getApplicablePropertiesForSelection().hasColor"
           :has-line-style-property="getApplicablePropertiesForSelection().hasLineStyle"
           :has-size-property="getApplicablePropertiesForSelection().hasSize"
@@ -2170,6 +2390,8 @@ onBeforeUnmount(() => {
           @apply-color="applyColorToSelection"
           @apply-line-style="applyLineStyle"
           @apply-size="applySize"
+          @arrow-breaks-delta="shiftSelectedArrowBreaks"
+          @arrow-orthogonal-change="setSelectedArrowOrthogonal"
           @frame-name-change="onSelectedFrameNameChange"
           @frame-index-change="onSelectedFrameIndexInputChange"
           @frame-index-shift="shiftSelectedFrameIndex"
