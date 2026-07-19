@@ -22,6 +22,7 @@ import ToolsPanel from '@/components/ToolsPanel.vue'
 import SchemaSidebar from '@/components/SchemaSidebar.vue'
 import IconSetSidebar from '@/components/IconSetSidebar.vue'
 import AppDialogModal from '@/components/AppDialogModal.vue'
+import IconEditModal from '@/components/IconEditModal.vue'
 
 const board = useDrawingBoardStore()
 
@@ -67,6 +68,19 @@ const dialogState = reactive<{
   danger: false,
 })
 let resolveDialog: ((result: { confirmed: boolean; value: string }) => void) | null = null
+const iconEditorState = reactive<{
+  isOpen: boolean
+  iconSetId: string | null
+  iconId: string | null
+  name: string
+  src: string
+}>({
+  isOpen: false,
+  iconSetId: null,
+  iconId: null,
+  name: '',
+  src: '',
+})
 
 const viewport = reactive({
   zoom: 1,
@@ -403,13 +417,26 @@ async function addIconUrl(iconSetId: string): Promise<void> {
   await addIconToSet(iconSetId, { name: trimmedName, src: trimmedSrc })
 }
 
-async function deleteIcon(iconSetId: string, iconId: string): Promise<void> {
+function removeIcon(iconSetId: string, iconId: string): boolean {
   const iconSet = iconSets.value.find((item) => item.id === iconSetId)
   if (!iconSet) {
-    return
+    return false
   }
   const icon = iconSet.icons.find((item) => item.id === iconId)
   if (!icon) {
+    return false
+  }
+  delete iconImageCache.value[String(icon.src || '')]
+  iconSet.icons = iconSet.icons.filter((item) => item.id !== iconId)
+  board.persist()
+  renderCanvas()
+  return true
+}
+
+async function deleteIcon(iconSetId: string, iconId: string): Promise<void> {
+  const iconSet = iconSets.value.find((item) => item.id === iconSetId)
+  const icon = iconSet?.icons.find((item) => item.id === iconId)
+  if (!iconSet || !icon) {
     return
   }
   const confirmed = await openConfirmDialog({
@@ -421,10 +448,74 @@ async function deleteIcon(iconSetId: string, iconId: string): Promise<void> {
   if (!confirmed) {
     return
   }
-  delete iconImageCache.value[String(icon.src || '')]
-  iconSet.icons = iconSet.icons.filter((item) => item.id !== iconId)
+  removeIcon(iconSetId, iconId)
+}
+
+function openIconEditor(iconSetId: string, iconId: string): void {
+  const iconSet = iconSets.value.find((item) => item.id === iconSetId)
+  const icon = iconSet?.icons.find((item) => item.id === iconId)
+  if (!iconSet || !icon) {
+    return
+  }
+  iconEditorState.isOpen = true
+  iconEditorState.iconSetId = iconSetId
+  iconEditorState.iconId = iconId
+  iconEditorState.name = String(icon.name || 'icon')
+  iconEditorState.src = String(icon.src || '')
+}
+
+function closeIconEditor(): void {
+  iconEditorState.isOpen = false
+  iconEditorState.iconSetId = null
+  iconEditorState.iconId = null
+  iconEditorState.name = ''
+  iconEditorState.src = ''
+}
+
+async function saveIconEditor(): Promise<void> {
+  const iconSetId = iconEditorState.iconSetId
+  const iconId = iconEditorState.iconId
+  if (!iconSetId || !iconId) {
+    return
+  }
+  const iconSet = iconSets.value.find((item) => item.id === iconSetId)
+  const icon = iconSet?.icons.find((item) => item.id === iconId)
+  if (!iconSet || !icon) {
+    closeIconEditor()
+    return
+  }
+  const nextName = String(iconEditorState.name || '').trim() || 'icon'
+  const nextSrcRaw = String(iconEditorState.src || '').trim()
+  if (!nextSrcRaw) {
+    showToast('Icon source cannot be empty.', 'error')
+    return
+  }
+  const nextSrc = await resolveIconSourceForStorage(nextSrcRaw)
+  const dimensions = await loadImageDimensions(nextSrc)
+  const prevSrc = String(icon.src || '')
+  icon.name = nextName
+  icon.src = nextSrc
+  icon.width = dimensions.width
+  icon.height = dimensions.height
+  if (prevSrc && prevSrc !== nextSrc) {
+    delete iconImageCache.value[prevSrc]
+  }
   board.persist()
   renderCanvas()
+  closeIconEditor()
+  showToast('Icon updated.')
+}
+
+function deleteIconFromEditor(): void {
+  const iconSetId = iconEditorState.iconSetId
+  const iconId = iconEditorState.iconId
+  if (!iconSetId || !iconId) {
+    return
+  }
+  if (removeIcon(iconSetId, iconId)) {
+    closeIconEditor()
+    showToast('Icon deleted.')
+  }
 }
 
 function exportIconSet(iconSetId: string): void {
@@ -696,6 +787,231 @@ function getSelectedFrameExportFileBase(): string {
   }
   const raw = board.getFrameDisplayName(frame).replace(/[^a-z0-9-_]/gi, '_').toLowerCase()
   return raw || `frame_${Number(frame.frameIndex || 1)}`
+}
+
+function getSelectedElements(): BoardElement[] {
+  if (!board.activeSchema || selectedElementIds.value.length === 0) {
+    return []
+  }
+  const idSet = new Set(selectedElementIds.value)
+  return board.activeSchema.elements.filter((element) => idSet.has(element.id))
+}
+
+function getSizeKeyFromElement(element: BoardElement | null): 'small' | 'medium' | 'big' | null {
+  if (!element) {
+    return null
+  }
+  const presets = board.sizePresets
+  if (element.type === 'text') {
+    const fontSize = Number(element.fontSize || presets.small.fontSize)
+    if (fontSize === presets.small.fontSize) {
+      return 'small'
+    }
+    if (fontSize === presets.medium.fontSize) {
+      return 'medium'
+    }
+    if (fontSize === presets.big.fontSize) {
+      return 'big'
+    }
+    return null
+  }
+  const strokeWidth = Number(element.strokeWidth || presets.small.strokeWidth)
+  if (strokeWidth === presets.small.strokeWidth) {
+    return 'small'
+  }
+  if (strokeWidth === presets.medium.strokeWidth) {
+    return 'medium'
+  }
+  if (strokeWidth === presets.big.strokeWidth) {
+    return 'big'
+  }
+  return null
+}
+
+function getSelectedColor(): string | null {
+  if (selectedElementIds.value.length !== 1) {
+    return null
+  }
+  const selected = getSelectedElements()[0]
+  if (!selected) {
+    return null
+  }
+  if (selected.type === 'text') {
+    return String(selected.color || '') || null
+  }
+  if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow') {
+    return String(selected.stroke || '') || null
+  }
+  return null
+}
+
+function getSelectedLineStyle(): 'solid' | 'dashed' | null {
+  if (selectedElementIds.value.length !== 1) {
+    return null
+  }
+  const selected = getSelectedElements()[0]
+  if (!selected) {
+    return null
+  }
+  if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow') {
+    return selected.strokeStyle === 'dashed' ? 'dashed' : 'solid'
+  }
+  return null
+}
+
+function getSelectedSize(): 'small' | 'medium' | 'big' | null {
+  if (selectedElementIds.value.length !== 1) {
+    return null
+  }
+  return getSizeKeyFromElement(getSelectedElements()[0] || null)
+}
+
+function getApplicablePropertiesForSelection(): { hasColor: boolean; hasLineStyle: boolean; hasSize: boolean } {
+  const elements = getSelectedElements()
+  const hasColor = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')
+  const hasLineStyle = elements.some((element) => element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')
+  const hasSize = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow')
+  return { hasColor, hasLineStyle, hasSize }
+}
+
+function applyColorToSelection(color: string): void {
+  if (!board.activeSchema || selectedElementIds.value.length === 0) {
+    return
+  }
+  pushHistoryCheckpoint()
+  const idSet = new Set(selectedElementIds.value)
+  for (const element of board.activeSchema.elements) {
+    if (!idSet.has(element.id)) {
+      continue
+    }
+    if (element.type === 'text') {
+      element.color = color
+      continue
+    }
+    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow') {
+      element.stroke = color
+      if (element.type === 'rect' || element.type === 'ellipse') {
+        element.fill = hexToRgba(color, 0.22)
+      }
+    }
+  }
+  markDirty()
+  renderCanvas()
+}
+
+function applyLineStyle(style: 'solid' | 'dashed'): void {
+  if (!board.activeSchema || selectedElementIds.value.length === 0) {
+    return
+  }
+  pushHistoryCheckpoint()
+  const idSet = new Set(selectedElementIds.value)
+  for (const element of board.activeSchema.elements) {
+    if (!idSet.has(element.id)) {
+      continue
+    }
+    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow') {
+      element.strokeStyle = style
+    }
+  }
+  markDirty()
+  renderCanvas()
+}
+
+function applySize(size: 'small' | 'medium' | 'big'): void {
+  if (!board.activeSchema || selectedElementIds.value.length === 0) {
+    return
+  }
+  const preset = board.sizePresets[size]
+  pushHistoryCheckpoint()
+  const idSet = new Set(selectedElementIds.value)
+  for (const element of board.activeSchema.elements) {
+    if (!idSet.has(element.id)) {
+      continue
+    }
+    if (element.type === 'text') {
+      element.fontSize = preset.fontSize
+      continue
+    }
+    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow') {
+      element.strokeWidth = preset.strokeWidth
+    }
+  }
+  markDirty()
+  renderCanvas()
+}
+
+function getFramesForActiveSchema(): BoardElement[] {
+  if (!board.activeSchema) {
+    return []
+  }
+  return board.activeSchema.elements
+    .filter((element) => element.type === 'frame')
+    .sort((a, b) => Number(a.frameIndex || 0) - Number(b.frameIndex || 0))
+}
+
+function getSelectedFrameName(): string {
+  const frame = getSelectedFrame()
+  return frame ? board.getFrameDisplayName(frame) : ''
+}
+
+function onSelectedFrameNameChange(value: string): void {
+  const frame = getSelectedFrame()
+  if (!frame) {
+    return
+  }
+  const next = String(value || '').trim()
+  const fallback = board.getDefaultFrameName(Number(frame.frameIndex || 1))
+  frame.name = next || fallback
+  markDirty()
+  renderCanvas()
+}
+
+function canShiftSelectedFrameIndex(delta: number): boolean {
+  const frame = getSelectedFrame()
+  if (!frame) {
+    return false
+  }
+  const frames = getFramesForActiveSchema()
+  const max = frames.length
+  const current = Number(frame.frameIndex || 1)
+  const target = current + delta
+  return target >= 1 && target <= max
+}
+
+function setSelectedFrameIndex(nextIndex: number): void {
+  const frame = getSelectedFrame()
+  if (!frame) {
+    return
+  }
+  const frames = getFramesForActiveSchema()
+  const max = frames.length
+  const current = Number(frame.frameIndex || 1)
+  const target = clamp(Math.round(nextIndex), 1, max)
+  if (target === current) {
+    return
+  }
+  const swap = frames.find((item) => item.id !== frame.id && Number(item.frameIndex || 1) === target)
+  if (swap) {
+    swap.frameIndex = current
+  }
+  frame.frameIndex = target
+  markDirty()
+  renderCanvas()
+}
+
+function shiftSelectedFrameIndex(delta: number): void {
+  const frame = getSelectedFrame()
+  if (!frame) {
+    return
+  }
+  setSelectedFrameIndex(Number(frame.frameIndex || 1) + delta)
+}
+
+function onSelectedFrameIndexInputChange(value: number): void {
+  if (!Number.isFinite(value)) {
+    return
+  }
+  setSelectedFrameIndex(value)
 }
 
 async function buildSchemaPngBlob(exportBounds: { x: number; y: number; w: number; h: number } | null = null): Promise<Blob | null> {
@@ -1275,7 +1591,7 @@ function onPointerDown(event: PointerEvent): void {
 
   if (board.activeTool === 'select') {
     const selected = findSelectedElement()
-    if (selected) {
+    if (selected && !(event.ctrlKey || event.metaKey)) {
       const resizeHit = hitResizeHandle(pos.x, pos.y, selected, getCanvasContext())
       if (resizeHit) {
         pointer.mode = 'resize'
@@ -1291,6 +1607,23 @@ function onPointerDown(event: PointerEvent): void {
 
     const hit = hitTestElement(pos.x, pos.y, board.activeSchema.elements, getCanvasContext())
     if (hit) {
+      if (event.ctrlKey || event.metaKey) {
+        if (isSelected(hit.id)) {
+          selectedElementIds.value = selectedElementIds.value.filter((id) => id !== hit.id)
+        } else {
+          selectedElementIds.value = [...selectedElementIds.value, hit.id]
+        }
+        pointer.mode = 'idle'
+        pointer.startElements = {}
+        pointer.startElement = null
+        pointer.resizeHandle = null
+        pointer.ctrlPressed = false
+        pointer.initialSelection = []
+        marqueeRect.value = null
+        renderCanvas()
+        return
+      }
+
       if (!isSelected(hit.id)) {
         setSingleSelection(hit.id)
       }
@@ -1369,7 +1702,18 @@ function onPointerMove(event: PointerEvent): void {
     return
   }
 
-  if (pointer.mode === 'drag' && selectedElementIds.value.length > 0) {
+  if (pointer.mode === 'drag' && marqueeRect.value) {
+    const left = Math.min(pointer.startX, pos.x)
+    const top = Math.min(pointer.startY, pos.y)
+    const width = Math.abs(pos.x - pointer.startX)
+    const height = Math.abs(pos.y - pointer.startY)
+    marqueeRect.value = { x: left, y: top, w: width, h: height }
+    updateSelectionFromMarquee()
+    renderCanvas()
+    return
+  }
+
+  if (pointer.mode === 'drag' && selectedElementIds.value.length > 0 && Object.keys(pointer.startElements).length > 0) {
     if (!pointer.historyCaptured) {
       pushHistoryCheckpoint()
       pointer.historyCaptured = true
@@ -1393,17 +1737,6 @@ function onPointerMove(event: PointerEvent): void {
       }
     }
     markDirty()
-    renderCanvas()
-    return
-  }
-
-  if (pointer.mode === 'drag' && marqueeRect.value) {
-    const left = Math.min(pointer.startX, pos.x)
-    const top = Math.min(pointer.startY, pos.y)
-    const width = Math.abs(pos.x - pointer.startX)
-    const height = Math.abs(pos.y - pointer.startY)
-    marqueeRect.value = { x: left, y: top, w: width, h: height }
-    updateSelectionFromMarquee()
     renderCanvas()
     return
   }
@@ -1701,6 +2034,9 @@ function onWindowBlur(): void {
   if (dialogState.isOpen) {
     onDialogCancel()
   }
+  if (iconEditorState.isOpen) {
+    closeIconEditor()
+  }
 }
 
 function onResize(): void {
@@ -1751,7 +2087,39 @@ onBeforeUnmount(() => {
       />
 
       <div class="main-grid">
-        <ToolsPanel :tools="board.tools" :active-tool="board.activeTool" @select-tool="board.activeTool = $event" />
+        <ToolsPanel
+          :tools="board.tools"
+          :active-tool="board.activeTool"
+          :color-palette="board.colorPalette"
+          :active-color="board.activeColor"
+          :line-style="board.lineStyle"
+          :draw-size="board.drawSize"
+          :show-draw-options="board.activeTool !== 'frame' && !(board.activeTool === 'select' && selectedElementIds.length > 0)"
+          :show-properties="board.activeTool === 'select' && selectedElementIds.length > 0"
+          :selected-count="selectedElementIds.length"
+          :selected-is-frame="Boolean(getSelectedFrame())"
+          :selected-color="getSelectedColor()"
+          :selected-line-style="getSelectedLineStyle()"
+          :selected-size="getSelectedSize()"
+          :has-color-property="getApplicablePropertiesForSelection().hasColor"
+          :has-line-style-property="getApplicablePropertiesForSelection().hasLineStyle"
+          :has-size-property="getApplicablePropertiesForSelection().hasSize"
+          :selected-frame-name="getSelectedFrameName()"
+          :selected-frame-index="Number(getSelectedFrame()?.frameIndex || 1)"
+          :selected-frame-max-index="Math.max(1, getFramesForActiveSchema().length)"
+          :can-shift-frame-index-down="canShiftSelectedFrameIndex(-1)"
+          :can-shift-frame-index-up="canShiftSelectedFrameIndex(1)"
+          @select-tool="board.activeTool = $event"
+          @set-active-color="board.activeColor = $event"
+          @set-line-style="board.lineStyle = $event"
+          @set-draw-size="board.drawSize = $event"
+          @apply-color="applyColorToSelection"
+          @apply-line-style="applyLineStyle"
+          @apply-size="applySize"
+          @frame-name-change="onSelectedFrameNameChange"
+          @frame-index-change="onSelectedFrameIndexInputChange"
+          @frame-index-shift="shiftSelectedFrameIndex"
+        />
 
         <main class="canvas-wrap">
           <CanvasStatusBar
@@ -1801,7 +2169,7 @@ onBeforeUnmount(() => {
             @rename-set="renameIconSet"
             @export-set="exportIconSet"
             @delete-set="deleteIconSet"
-            @delete-icon="deleteIcon"
+            @edit-icon="openIconEditor"
             @icon-drag-start="onIconDragStart"
           />
         </aside>
@@ -1849,6 +2217,17 @@ onBeforeUnmount(() => {
       @update:model-value="dialogState.value = $event"
       @confirm="onDialogConfirm"
       @cancel="onDialogCancel"
+    />
+
+    <IconEditModal
+      :is-open="iconEditorState.isOpen"
+      :name="iconEditorState.name"
+      :src="iconEditorState.src"
+      @update:name="iconEditorState.name = $event"
+      @update:src="iconEditorState.src = $event"
+      @save="saveIconEditor"
+      @delete="deleteIconFromEditor"
+      @cancel="closeIconEditor"
     />
   </div>
 </template>

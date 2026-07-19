@@ -194,6 +194,236 @@ export function hitTestElement(
   elements: BoardElement[],
   ctx: CanvasRenderingContext2D | null,
 ): BoardElement | null {
+  const borderTolerance = 8
+
+  function distancePointToSegment(
+    px: number,
+    py: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+  ): number {
+    const dx = x2 - x1
+    const dy = y2 - y1
+    const lenSq = dx * dx + dy * dy
+    if (lenSq === 0) {
+      return Math.hypot(px - x1, py - y1)
+    }
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq))
+    const projX = x1 + t * dx
+    const projY = y1 + t * dy
+    return Math.hypot(px - projX, py - projY)
+  }
+
+  function isPointInTriangle(
+    px: number,
+    py: number,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    cx: number,
+    cy: number,
+  ): boolean {
+    const v0x = cx - ax
+    const v0y = cy - ay
+    const v1x = bx - ax
+    const v1y = by - ay
+    const v2x = px - ax
+    const v2y = py - ay
+
+    const dot00 = v0x * v0x + v0y * v0y
+    const dot01 = v0x * v1x + v0y * v1y
+    const dot02 = v0x * v2x + v0y * v2y
+    const dot11 = v1x * v1x + v1y * v1y
+    const dot12 = v1x * v2x + v1y * v2y
+
+    const denom = dot00 * dot11 - dot01 * dot01
+    if (denom === 0) {
+      return false
+    }
+    const invDenom = 1 / denom
+    const u = (dot11 * dot02 - dot01 * dot12) * invDenom
+    const v = (dot00 * dot12 - dot01 * dot02) * invDenom
+    return u >= 0 && v >= 0 && u + v <= 1
+  }
+
+  function isPointNearArrow(px: number, py: number, element: BoardElement): boolean {
+    const x1 = Number(element.x1 || 0)
+    const y1 = Number(element.y1 || 0)
+    const x2 = Number(element.x2 || 0)
+    const y2 = Number(element.y2 || 0)
+    const lineTolerance = Math.max(6, Number(element.strokeWidth || 2) + 4)
+
+    if (distancePointToSegment(px, py, x1, y1, x2, y2) <= lineTolerance) {
+      return true
+    }
+
+    const angle = Math.atan2(y2 - y1, x2 - x1)
+    const size = 12
+    const hx1 = x2 - size * Math.cos(angle - Math.PI / 6)
+    const hy1 = y2 - size * Math.sin(angle - Math.PI / 6)
+    const hx2 = x2 - size * Math.cos(angle + Math.PI / 6)
+    const hy2 = y2 - size * Math.sin(angle + Math.PI / 6)
+
+    if (isPointInTriangle(px, py, x2, y2, hx1, hy1, hx2, hy2)) {
+      return true
+    }
+
+    return (
+      distancePointToSegment(px, py, x2, y2, hx1, hy1) <= lineTolerance ||
+      distancePointToSegment(px, py, x2, y2, hx2, hy2) <= lineTolerance
+    )
+  }
+
+  function isPointInRoundedRect(
+    px: number,
+    py: number,
+    bx: number,
+    by: number,
+    bw: number,
+    bh: number,
+    radiusInput = RECT_CORNER_RADIUS,
+  ): boolean {
+    if (bw <= 0 || bh <= 0) {
+      return false
+    }
+    const radius = Math.max(0, Math.min(radiusInput, bw / 2, bh / 2))
+    const left = bx
+    const right = bx + bw
+    const top = by
+    const bottom = by + bh
+
+    if (px < left || px > right || py < top || py > bottom) {
+      return false
+    }
+
+    if (radius <= 0) {
+      return true
+    }
+
+    if ((px >= left + radius && px <= right - radius) || (py >= top + radius && py <= bottom - radius)) {
+      return true
+    }
+
+    const corners = [
+      { cx: left + radius, cy: top + radius },
+      { cx: right - radius, cy: top + radius },
+      { cx: right - radius, cy: bottom - radius },
+      { cx: left + radius, cy: bottom - radius },
+    ]
+
+    for (const corner of corners) {
+      const dx = px - corner.cx
+      const dy = py - corner.cy
+      if (dx * dx + dy * dy <= radius * radius) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  function isPointInEllipse(px: number, py: number, cx: number, cy: number, rx: number, ry: number): boolean {
+    if (rx <= 0 || ry <= 0) {
+      return false
+    }
+    const nx = (px - cx) / rx
+    const ny = (py - cy) / ry
+    return nx * nx + ny * ny <= 1
+  }
+
+  function isPointOnRoundedRectBorder(px: number, py: number, bx: number, by: number, bw: number, bh: number): boolean {
+    const outerX = bx - borderTolerance
+    const outerY = by - borderTolerance
+    const outerW = bw + borderTolerance * 2
+    const outerH = bh + borderTolerance * 2
+    const outerRadius = RECT_CORNER_RADIUS + borderTolerance
+
+    if (!isPointInRoundedRect(px, py, outerX, outerY, outerW, outerH, outerRadius)) {
+      return false
+    }
+
+    const innerX = bx + borderTolerance
+    const innerY = by + borderTolerance
+    const innerW = bw - borderTolerance * 2
+    const innerH = bh - borderTolerance * 2
+    if (innerW <= 0 || innerH <= 0) {
+      return true
+    }
+
+    const innerRadius = Math.max(0, RECT_CORNER_RADIUS - borderTolerance)
+    return !isPointInRoundedRect(px, py, innerX, innerY, innerW, innerH, innerRadius)
+  }
+
+  function isPointOnEllipseBorder(px: number, py: number, bx: number, by: number, bw: number, bh: number): boolean {
+    if (bw <= 0 || bh <= 0) {
+      return false
+    }
+    const cx = bx + bw / 2
+    const cy = by + bh / 2
+    const outerRx = bw / 2 + borderTolerance
+    const outerRy = bh / 2 + borderTolerance
+    if (!isPointInEllipse(px, py, cx, cy, outerRx, outerRy)) {
+      return false
+    }
+
+    const innerRx = bw / 2 - borderTolerance
+    const innerRy = bh / 2 - borderTolerance
+    if (innerRx <= 0 || innerRy <= 0) {
+      return true
+    }
+    return !isPointInEllipse(px, py, cx, cy, innerRx, innerRy)
+  }
+
+  function isPointOnFrameBorder(px: number, py: number, bx: number, by: number, bw: number, bh: number): boolean {
+    const outerLeft = bx - borderTolerance
+    const outerTop = by - borderTolerance
+    const outerRight = bx + bw + borderTolerance
+    const outerBottom = by + bh + borderTolerance
+    if (px < outerLeft || px > outerRight || py < outerTop || py > outerBottom) {
+      return false
+    }
+
+    const innerLeft = bx + borderTolerance
+    const innerTop = by + borderTolerance
+    const innerRight = bx + bw - borderTolerance
+    const innerBottom = by + bh - borderTolerance
+    if (innerLeft >= innerRight || innerTop >= innerBottom) {
+      return true
+    }
+
+    return !(px >= innerLeft && px <= innerRight && py >= innerTop && py <= innerBottom)
+  }
+
+  function getFrameNameForHitTest(frame: BoardElement): string {
+    const name = String(frame.name || '').trim()
+    if (name) {
+      return name
+    }
+    const parsed = Number.parseInt(String(frame.frameIndex || ''), 10)
+    const index = Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+    return `Frame ${index}`
+  }
+
+  function isPointInFrameTitle(px: number, py: number, frame: BoardElement, bx: number, by: number): boolean {
+    const fontSize = FRAME_STYLE.title.fontSize
+    const baselineX = bx + FRAME_STYLE.title.xOffset
+    const baselineY = by + FRAME_STYLE.title.yOffset
+    const text = getFrameNameForHitTest(frame)
+    let textWidth = text.length * fontSize * 0.62
+    if (ctx) {
+      ctx.save()
+      ctx.font = `${FRAME_STYLE.title.fontWeight} ${fontSize}px ${FRAME_STYLE.title.fontFamily}`
+      textWidth = Math.max(1, ctx.measureText(text).width)
+      ctx.restore()
+    }
+    const top = baselineY - fontSize
+    const bottom = baselineY
+    return px >= baselineX && px <= baselineX + textWidth && py >= top && py <= bottom
+  }
+
   for (let i = elements.length - 1; i >= 0; i -= 1) {
     const element = elements[i]
     if (!element) {
@@ -203,6 +433,35 @@ export function hitTestElement(
     if (!b) {
       continue
     }
+
+    if (element.type === 'ellipse') {
+      if (isPointOnEllipseBorder(x, y, b.x, b.y, b.w, b.h)) {
+        return element
+      }
+      continue
+    }
+
+    if (element.type === 'rect') {
+      if (isPointOnRoundedRectBorder(x, y, b.x, b.y, b.w, b.h)) {
+        return element
+      }
+      continue
+    }
+
+    if (element.type === 'frame') {
+      if (isPointOnFrameBorder(x, y, b.x, b.y, b.w, b.h) || isPointInFrameTitle(x, y, element, b.x, b.y)) {
+        return element
+      }
+      continue
+    }
+
+    if (element.type === 'arrow') {
+      if (isPointNearArrow(x, y, element)) {
+        return element
+      }
+      continue
+    }
+
     if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
       return element
     }

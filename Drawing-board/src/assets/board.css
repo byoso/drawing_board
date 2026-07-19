@@ -133,7 +133,49 @@ body {
 }
 
 .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 2.15em;
+  padding: 0.5em 0.9em;
+  border: 1px solid #c8d8f2;
   border-radius: 8px;
+  background: #ffffff;
+  color: #1f365c;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(22, 40, 72, 0.08);
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.08s ease,
+    box-shadow 0.15s ease;
+}
+
+.button:hover {
+  border-color: #acc3ea;
+  background: #f8fbff;
+}
+
+.button:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 1px rgba(22, 40, 72, 0.08);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(44, 121, 242, 0.2);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .top-actions .button,
@@ -619,8 +661,8 @@ body {
 }
 
 .mini-btn {
-  padding: 0.2rem 0.45rem;
-  height: auto;
+  padding: 0.28rem 0.5rem;
+  min-height: 1.8em;
   font-size: 0.72rem;
 }
 
@@ -637,12 +679,14 @@ body {
 .svg-save-btn {
   background: #1b74d8;
   color: white;
-  border: none;
+  border-color: #1766bf;
+  box-shadow: 0 1px 2px rgba(23, 102, 191, 0.28);
 }
 
 .svg-save-btn:hover {
   color: white;
   background: #155fb2;
+  border-color: #12539b;
 }
 
 .svg-clip-btn {
@@ -654,12 +698,14 @@ body {
 .png-save-btn {
   background: #2f9d54;
   color: white;
-  border: none;
+  border-color: #278348;
+  box-shadow: 0 1px 2px rgba(39, 131, 72, 0.26);
 }
 
 .png-save-btn:hover {
   color: white;
   background: #268246;
+  border-color: #216f3c;
 }
 
 .png-clip-btn {
@@ -671,23 +717,41 @@ body {
 .save-btn {
   background: #1165da;
   color: white;
-  border: none;
+  border-color: #0f58be;
+  box-shadow: 0 1px 2px rgba(15, 88, 190, 0.28);
 }
 
 .save-btn:hover {
   color: white;
   background: #0d58bc;
+  border-color: #0b4da4;
 }
 
 .ghost-btn {
   background: #f7f9ff;
   border: 1px solid #c7d6f6;
+  color: #284472;
+}
+
+.ghost-btn:hover {
+  background: #edf3ff;
+  border-color: #b1c7f1;
 }
 
 .danger-btn {
   background: #fff3ef;
   border: 1px solid #f3c2b7;
   color: #973622;
+}
+
+.danger-btn:hover {
+  background: #ffe7e1;
+  border-color: #e7ab9d;
+}
+
+.zoom-reset-btn {
+  min-width: 2em;
+  padding: 0.2rem 0.4rem;
 }
 
 .toast {
@@ -746,12 +810,47 @@ body {
 .app-modal-body {
   padding: 14px 16px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .app-modal-message {
   margin: 0;
   color: #30415e;
+}
+
+.app-modal .field {
+  margin: 0;
+}
+
+.app-modal .label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #2f466e;
+}
+
+.app-modal .input {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #c9d8f2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fbfdff;
+  color: #1e355d;
+  box-shadow: inset 0 1px 2px rgba(30, 53, 93, 0.06);
+}
+
+.app-modal .input:focus {
+  outline: none;
+  border-color: #73a1eb;
+  box-shadow: 0 0 0 3px rgba(46, 115, 214, 0.15);
+  background: #ffffff;
+}
+
+.app-modal .control {
+  margin-top: 2px;
 }
 
 .app-modal-footer {

@@ -25,7 +25,7 @@ const emit = defineEmits<{
   (e: 'rename-set', iconSetId: string): void
   (e: 'export-set', iconSetId: string): void
   (e: 'delete-set', iconSetId: string): void
-  (e: 'delete-icon', iconSetId: string, iconId: string): void
+  (e: 'edit-icon', iconSetId: string, iconId: string): void
   (e: 'icon-drag-start', iconSetId: string, iconId: string, event: DragEvent): void
 }>()
 
@@ -76,7 +76,7 @@ function getSortedIcons(iconSet: IconSetItem): IconItem[] {
           >
             <img :src="icon.src" :alt="icon.name || 'icon'" :title="icon.name || 'icon'" />
             <div class="icon-thumb-meta">
-              <button class="button is-small ghost-btn mini-btn" @click.stop="emit('delete-icon', iconSet.id, icon.id)">Delete</button>
+              <button class="button is-small ghost-btn mini-btn" @click.stop="emit('edit-icon', iconSet.id, icon.id)">Edit</button>
             </div>
           </div>
         </div>
