@@ -1,0 +1,9 @@
+@import './base.css';
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
