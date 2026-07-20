@@ -65,12 +65,12 @@ export function createBoardShortcutsHandler(options: UseBoardShortcutsOptions) {
       return
     }
 
-    const basicShortcuts: Record<string, 'rect' | 'ellipse' | 'arrow' | 'frame' | 'text' | 'relation'> = {
+    const basicShortcuts: Record<string, 'rect' | 'ellipse' | 'arrow' | 'frame' | 'text' | 'relation' | 'table'> = {
       r: options.getActiveToolSet() === 'database' ? 'relation' : 'rect',
       e: 'ellipse',
       a: 'arrow',
       f: 'frame',
-      t: 'text',
+      t: options.getActiveToolSet() === 'database' ? 'table' : 'text',
     }
     if (basicShortcuts[key]) {
       options.setActiveTool(basicShortcuts[key])

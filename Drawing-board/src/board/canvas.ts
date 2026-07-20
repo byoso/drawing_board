@@ -33,7 +33,7 @@ function getArrowBreakCount(element: BoardElement): number {
 
 function getRelationType(element: BoardElement): RelationType {
   const value = String(element.relationType || 'many-to-one')
-  if (value === 'one-to-one' || value === 'many-to-many') {
+  if (value === 'one-to-one' || value === 'many-to-one' || value === 'one-to-many' || value === 'many-to-many') {
     return value
   }
   return 'many-to-one'
@@ -45,6 +45,9 @@ function getRelationEndpointKind(type: RelationType, atStart: boolean): 'one' | 
   }
   if (type === 'many-to-many') {
     return 'many'
+  }
+  if (type === 'one-to-many') {
+    return atStart ? 'one' : 'many'
   }
   return atStart ? 'many' : 'one'
 }
@@ -121,23 +124,8 @@ export function getArrowPathPoints(element: BoardElement): ArrowPoint[] {
   }
 
   const orthogonalBreaks: ArrowPoint[] = []
-  const dx = end.x - start.x
-  const dy = end.y - start.y
-  // If endpoints are aligned, start on the opposite axis so 2+ breaks form a visible dogleg.
-  let horizontalSegment = Math.abs(dx) >= Math.abs(dy)
-  if (breaks.length > 1) {
-    if (Math.abs(dy) < 0.0001) {
-      horizontalSegment = false
-    } else if (Math.abs(dx) < 0.0001) {
-      horizontalSegment = true
-    }
-  }
-
-  const distanceSquared = (a: ArrowPoint, b: ArrowPoint): number => {
-    const ddx = a.x - b.x
-    const ddy = a.y - b.y
-    return ddx * ddx + ddy * ddy
-  }
+  // Anchor initial orientation to the first user break so orientation can flip naturally near endpoints.
+  let horizontalSegment = Math.abs(breaks[0]!.x - start.x) >= Math.abs(breaks[0]!.y - start.y)
 
   for (let i = 0; i < breaks.length; i += 1) {
     const previous = i === 0 ? start : orthogonalBreaks[i - 1]!
@@ -156,13 +144,13 @@ export function getArrowPathPoints(element: BoardElement): ArrowPoint[] {
 
     const candidateVerticalToEnd: ArrowPoint = { x: end.x, y: previous.y }
     const candidateHorizontalToEnd: ArrowPoint = { x: previous.x, y: end.y }
-    const scoreVerticalToEnd = distanceSquared(previous, candidateVerticalToEnd) + distanceSquared(candidateVerticalToEnd, end)
-    const scoreHorizontalToEnd = distanceSquared(previous, candidateHorizontalToEnd) + distanceSquared(candidateHorizontalToEnd, end)
+    const distToVertical = Math.hypot(raw.x - candidateVerticalToEnd.x, raw.y - candidateVerticalToEnd.y)
+    const distToHorizontal = Math.hypot(raw.x - candidateHorizontalToEnd.x, raw.y - candidateHorizontalToEnd.y)
 
-    if (scoreVerticalToEnd === scoreHorizontalToEnd) {
+    if (distToVertical === distToHorizontal) {
       orthogonalBreaks.push(horizontalSegment ? candidateVerticalToEnd : candidateHorizontalToEnd)
     } else {
-      orthogonalBreaks.push(scoreVerticalToEnd > scoreHorizontalToEnd ? candidateVerticalToEnd : candidateHorizontalToEnd)
+      orthogonalBreaks.push(distToVertical <= distToHorizontal ? candidateVerticalToEnd : candidateHorizontalToEnd)
     }
   }
 
@@ -205,7 +193,7 @@ export function drawRoundedRectPath(
 }
 
 export function getElementBounds(element: BoardElement, ctx: CanvasRenderingContext2D | null) {
-  if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon' || element.type === 'frame') {
+  if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon' || element.type === 'frame' || element.type === 'table') {
     return normalizeRect(element)
   }
   if (element.type === 'arrow' || element.type === 'relation') {
@@ -284,6 +272,55 @@ export function drawElement(
     ctx.ellipse(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, r.h / 2, 0, 0, Math.PI * 2)
     ctx.fill()
     ctx.stroke()
+  }
+
+  if (element.type === 'table') {
+    const r = normalizeRect(element)
+    const title = String(element.tableTitle || 'Table').trim() || 'Table'
+    const fields = Array.isArray(element.tableFields) ? element.tableFields.map((field) => String(field || '')) : []
+
+    ctx.save()
+    ctx.fillStyle = '#ffffff'
+    ctx.strokeStyle = String(element.stroke || '#1f2d54')
+    ctx.lineWidth = Number(element.strokeWidth || 2)
+    ctx.beginPath()
+    ctx.rect(r.x, r.y, r.w, r.h)
+    ctx.fill()
+    ctx.stroke()
+
+    const headerHeight = Math.min(34, Math.max(24, r.h * 0.28))
+    ctx.fillStyle = '#eef4ff'
+    ctx.fillRect(r.x, r.y, r.w, headerHeight)
+    ctx.beginPath()
+    ctx.moveTo(r.x, r.y + headerHeight)
+    ctx.lineTo(r.x + r.w, r.y + headerHeight)
+    ctx.stroke()
+
+    ctx.fillStyle = '#1f2d54'
+    ctx.font = '700 14px Space Grotesk'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(title, r.x + 10, r.y + headerHeight / 2)
+
+    const rowHeight = 20
+    ctx.font = '13px Space Grotesk'
+    fields.forEach((field, index) => {
+      const y = r.y + headerHeight + rowHeight * index + rowHeight / 2
+      if (y + rowHeight / 2 > r.y + r.h) {
+        return
+      }
+      ctx.fillStyle = '#2d4169'
+      ctx.fillText(field, r.x + 10, y)
+      ctx.strokeStyle = '#dfe7f7'
+      ctx.lineWidth = 1
+      const lineY = r.y + headerHeight + rowHeight * (index + 1)
+      if (lineY < r.y + r.h) {
+        ctx.beginPath()
+        ctx.moveTo(r.x, lineY)
+        ctx.lineTo(r.x + r.w, lineY)
+        ctx.stroke()
+      }
+    })
+    ctx.restore()
   }
 
   if (element.type === 'icon') {

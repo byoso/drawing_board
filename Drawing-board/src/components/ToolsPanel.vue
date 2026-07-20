@@ -250,6 +250,16 @@ function onRelationTypeChange(event: Event): void {
           >
           Many to one
         </label>
+        <label class="option-chip" :class="{ active: selectedRelationType === 'one-to-many' }">
+          <input
+            type="radio"
+            name="relation-type-selected"
+            value="one-to-many"
+            :checked="selectedRelationType === 'one-to-many'"
+            @change="onRelationTypeChange"
+          >
+          One to many
+        </label>
         <label class="option-chip" :class="{ active: selectedRelationType === 'many-to-many' }">
           <input
             type="radio"
@@ -307,6 +317,16 @@ function onRelationTypeChange(event: Event): void {
             @change="onRelationTypeChange"
           >
           Many to one
+        </label>
+        <label class="option-chip" :class="{ active: selectedRelationType === 'one-to-many' }">
+          <input
+            type="radio"
+            name="relation-type-creation"
+            value="one-to-many"
+            :checked="selectedRelationType === 'one-to-many'"
+            @change="onRelationTypeChange"
+          >
+          One to many
         </label>
         <label class="option-chip" :class="{ active: selectedRelationType === 'many-to-many' }">
           <input

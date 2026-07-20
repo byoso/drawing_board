@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+
 interface IconItem {
   id: string
   name?: string
@@ -15,6 +17,8 @@ interface IconSetItem {
 defineProps<{
   iconSets: IconSetItem[]
 }>()
+
+const isCollapsed = ref(false)
 
 const emit = defineEmits<{
   (e: 'create-set'): void
@@ -39,8 +43,14 @@ function getSortedIcons(iconSet: IconSetItem): IconItem[] {
 
 <template>
   <div>
-    <p class="panel-title icon-sets-title">Icon sets</p>
-    <div class="icon-set-list">
+    <div class="section-header-row collapse-row" role="button" tabindex="0" @click="isCollapsed = !isCollapsed">
+      <p class="panel-title icon-sets-title">Icon sets</p>
+      <span class="collapse-btn" aria-hidden="true">
+        <span v-if="isCollapsed">&#9656;</span>
+        <span v-else>&#9662;</span>
+      </span>
+    </div>
+    <div v-if="!isCollapsed" class="icon-set-list">
       <div class="icon-set-actions">
         <button class="button is-small ghost-btn" @click="emit('create-set')">New set</button>
         <button class="button is-small ghost-btn" @click="emit('import-set')">Import JSON</button>

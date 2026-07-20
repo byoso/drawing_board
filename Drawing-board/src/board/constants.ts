@@ -10,7 +10,7 @@ export const FRAME_STYLE = Object.freeze({
   strokeWidth: 2,
   strokeStyle: 'solid',
   fill: 'rgba(0,0,0,0)',
-  dashArray: [10, 7],
+  dashArray: [],
   title: Object.freeze({
     fontSize: 24,
     fontWeight: 700,

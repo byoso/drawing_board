@@ -3,31 +3,8 @@ import { defineStore } from 'pinia'
 import { SCHEMA_VERSION } from '@/board/constants'
 import { loadBoardStore, persistBoardStore } from '@/board/storage'
 import type { BoardStoreData, Schema, ToolDef, ToolId, ToolSetId } from '@/board/types'
+import { TOOL_SET_DEFINITIONS, TOOL_SET_OPTIONS } from '@/toolSets'
 import { uid } from '@/board/utils'
-
-const SELECT_TOOL: ToolDef = { id: 'select', label: 'Select', shortcut: 'S' }
-
-const TOOL_SETS: Record<ToolSetId, ToolDef[]> = {
-  tools: [
-    SELECT_TOOL,
-    { id: 'rect', label: 'Rectangle', shortcut: 'R' },
-    { id: 'ellipse', label: 'Ellipse', shortcut: 'E' },
-    { id: 'arrow', label: 'Arrow', shortcut: 'A' },
-    { id: 'frame', label: 'Frame', shortcut: 'F' },
-    { id: 'text', label: 'Text', shortcut: 'T' },
-  ],
-  database: [
-    SELECT_TOOL,
-    { id: 'relation', label: 'Relation', shortcut: 'R' },
-  ],
-}
-
-function ensureToolSetContainsSelect(toolSet: ToolDef[]): ToolDef[] {
-  if (toolSet.some((tool) => tool.id === 'select')) {
-    return toolSet
-  }
-  return [SELECT_TOOL, ...toolSet]
-}
 
 function makeEmptySchema(name: string): Schema {
   const now = Date.now()
@@ -41,16 +18,10 @@ function makeEmptySchema(name: string): Schema {
 }
 
 export const useDrawingBoardStore = defineStore('drawing-board', () => {
-  const toolSets = ref<Record<ToolSetId, ToolDef[]>>({
-    tools: ensureToolSetContainsSelect(TOOL_SETS.tools),
-    database: ensureToolSetContainsSelect(TOOL_SETS.database),
-  })
+  const toolSets = ref<Record<ToolSetId, ToolDef[]>>(TOOL_SET_DEFINITIONS)
   const activeToolSet = ref<ToolSetId>('tools')
   const tools = computed<ToolDef[]>(() => toolSets.value[activeToolSet.value] || toolSets.value.tools)
-  const toolSetOptions = ref<Array<{ id: ToolSetId; label: string }>>([
-    { id: 'tools', label: 'Tools' },
-    { id: 'database', label: 'Database' },
-  ])
+  const toolSetOptions = ref<Array<{ id: ToolSetId; label: string }>>(TOOL_SET_OPTIONS)
   const colorPalette = ref(['#6B8EEA', '#4FA8A6', '#6DAE6B', '#D0A15A', '#E08960', '#C481B9', '#8E91C8', '#7E8AA2'])
   const activeColor = ref('#6B8EEA')
   const lineStyle = ref<'solid' | 'dashed'>('solid')

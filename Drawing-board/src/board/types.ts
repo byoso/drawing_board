@@ -1,6 +1,6 @@
-export type ToolId = 'select' | 'rect' | 'ellipse' | 'arrow' | 'frame' | 'text' | 'relation'
+export type ToolId = 'select' | 'rect' | 'ellipse' | 'arrow' | 'frame' | 'text' | 'relation' | 'table'
 export type ToolSetId = 'tools' | 'database'
-export type RelationType = 'one-to-one' | 'many-to-one' | 'many-to-many'
+export type RelationType = 'one-to-one' | 'many-to-one' | 'one-to-many' | 'many-to-many'
 
 export interface ToolDef {
   id: ToolId
@@ -22,6 +22,8 @@ export interface BoardElement {
   breaks?: number
   orthogonal?: boolean
   relationType?: RelationType
+  tableTitle?: string
+  tableFields?: string[]
   breakPoints?: Array<{ x: number; y: number }>
   stroke?: string
   fill?: string

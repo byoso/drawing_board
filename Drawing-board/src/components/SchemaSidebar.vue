@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+
 interface SchemaListItem {
   id: string
   name: string
@@ -9,6 +11,8 @@ interface SchemaFrameItem {
   id: string
   label: string
 }
+
+const isCollapsed = ref(false)
 
 defineProps<{
   schemas: SchemaListItem[]
@@ -36,8 +40,15 @@ function onRenameDraftInput(event: Event): void {
 
 <template>
   <div>
-    <p class="panel-title">Diagrams</p>
-    <div class="schema-list">
+    <div class="section-header-row collapse-row" role="button" tabindex="0" @click="isCollapsed = !isCollapsed">
+      <p class="panel-title">Diagrams</p>
+      <span class="collapse-btn" aria-hidden="true">
+        <span v-if="isCollapsed">&#9656;</span>
+        <span v-else>&#9662;</span>
+      </span>
+    </div>
+
+    <div v-if="!isCollapsed" class="schema-list">
       <article
         v-for="schema in schemas"
         :key="schema.id"

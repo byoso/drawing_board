@@ -24,6 +24,8 @@ import SchemaSidebar from '@/components/SchemaSidebar.vue'
 import IconSetSidebar from '@/components/IconSetSidebar.vue'
 import AppDialogModal from '@/components/AppDialogModal.vue'
 import IconEditModal from '@/components/IconEditModal.vue'
+import TableEditModal from '@/components/TableEditModal.vue'
+import TextEditModal from '@/components/TextEditModal.vue'
 
 const board = useDrawingBoardStore()
 
@@ -86,6 +88,32 @@ const iconEditorState = reactive<{
   iconId: null,
   name: '',
   src: '',
+})
+const tableEditorState = reactive<{
+  isOpen: boolean
+  tableId: string | null
+  title: string
+  fields: string[]
+}>({
+  isOpen: false,
+  tableId: null,
+  title: 'Table',
+  fields: [],
+})
+const textEditorState = reactive<{
+  isOpen: boolean
+  mode: 'create' | 'edit'
+  textId: string | null
+  x: number
+  y: number
+  value: string
+}>({
+  isOpen: false,
+  mode: 'create',
+  textId: null,
+  x: 0,
+  y: 0,
+  value: 'Text',
 })
 
 const viewport = reactive({
@@ -175,7 +203,7 @@ function getCanvasContext(): CanvasRenderingContext2D | null {
   return canvasRef.value ? canvasRef.value.getContext('2d') : null
 }
 
-function getCanvasPosition(event: PointerEvent | WheelEvent) {
+function getCanvasPosition(event: PointerEvent | WheelEvent | MouseEvent) {
   const canvas = canvasRef.value
   if (!canvas) {
     return { x: 0, y: 0 }
@@ -187,7 +215,7 @@ function getCanvasPosition(event: PointerEvent | WheelEvent) {
   }
 }
 
-function getPointerPosition(event: PointerEvent | WheelEvent) {
+function getPointerPosition(event: PointerEvent | WheelEvent | MouseEvent) {
   const p = getCanvasPosition(event)
   return {
     x: clamp(p.x / viewport.zoom + viewport.offsetX, 0, WORLD_WIDTH),
@@ -538,6 +566,130 @@ function deleteIconFromEditor(): void {
     closeIconEditor()
     showToast('Icon deleted.')
   }
+}
+
+function openTableEditor(table: BoardElement): void {
+  tableEditorState.isOpen = true
+  tableEditorState.tableId = table.id
+  tableEditorState.title = String(table.tableTitle || 'Table')
+  tableEditorState.fields = Array.isArray(table.tableFields) ? table.tableFields.map((field) => String(field || '')) : []
+}
+
+function closeTableEditor(): void {
+  tableEditorState.isOpen = false
+  tableEditorState.tableId = null
+  tableEditorState.title = 'Table'
+  tableEditorState.fields = []
+}
+
+function onTableEditorTitleChange(value: string): void {
+  tableEditorState.title = String(value || '')
+}
+
+function onTableEditorFieldChange(payload: { index: number; value: string }): void {
+  const index = Number(payload.index)
+  if (!Number.isFinite(index) || index < 0 || index >= tableEditorState.fields.length) {
+    return
+  }
+  tableEditorState.fields[index] = String(payload.value || '')
+}
+
+function addTableEditorField(): void {
+  tableEditorState.fields.push('')
+}
+
+function removeTableEditorField(index: number): void {
+  if (index < 0 || index >= tableEditorState.fields.length) {
+    return
+  }
+  tableEditorState.fields.splice(index, 1)
+}
+
+function saveTableEditor(): void {
+  if (!board.activeSchema || !tableEditorState.tableId) {
+    return
+  }
+  const table = board.activeSchema.elements.find((element) => element.id === tableEditorState.tableId && element.type === 'table')
+  if (!table) {
+    closeTableEditor()
+    return
+  }
+
+  pushHistoryCheckpoint()
+  table.tableTitle = String(tableEditorState.title || '').trim() || 'Table'
+  table.tableFields = tableEditorState.fields.map((field) => String(field || '').trim()).filter((field) => field.length > 0)
+  markDirty()
+  renderCanvas()
+  closeTableEditor()
+}
+
+function openTextCreateEditor(position: { x: number; y: number }): void {
+  textEditorState.isOpen = true
+  textEditorState.mode = 'create'
+  textEditorState.textId = null
+  textEditorState.x = position.x
+  textEditorState.y = position.y
+  textEditorState.value = 'Text'
+}
+
+function openTextEditEditor(element: BoardElement): void {
+  textEditorState.isOpen = true
+  textEditorState.mode = 'edit'
+  textEditorState.textId = element.id
+  textEditorState.x = Number(element.x || 0)
+  textEditorState.y = Number(element.y || 0)
+  textEditorState.value = String(element.text || '')
+}
+
+function closeTextEditor(): void {
+  textEditorState.isOpen = false
+  textEditorState.mode = 'create'
+  textEditorState.textId = null
+  textEditorState.x = 0
+  textEditorState.y = 0
+  textEditorState.value = 'Text'
+}
+
+function saveTextEditor(): void {
+  if (!board.activeSchema) {
+    return
+  }
+  const nextText = String(textEditorState.value || '')
+  if (textEditorState.mode === 'create') {
+    const textElement: BoardElement = {
+      id: uid('el'),
+      type: 'text',
+      x: textEditorState.x,
+      y: textEditorState.y,
+      text: nextText || 'Text',
+      color: board.activeColor,
+      fontSize: board.getCurrentFontSize(),
+    }
+    pushHistoryCheckpoint()
+    board.activeSchema.elements.push(textElement)
+    setSingleSelection(textElement.id)
+    markDirty()
+    renderCanvas()
+    closeTextEditor()
+    return
+  }
+
+  const textElement = board.activeSchema.elements.find(
+    (element) => element.id === textEditorState.textId && element.type === 'text',
+  )
+  if (!textElement) {
+    closeTextEditor()
+    return
+  }
+  if (String(textElement.text || '') === nextText) {
+    closeTextEditor()
+    return
+  }
+  pushHistoryCheckpoint()
+  textElement.text = nextText || 'Text'
+  markDirty()
+  renderCanvas()
+  closeTextEditor()
 }
 
 function exportIconSet(iconSetId: string): void {
@@ -960,7 +1112,7 @@ function getSelectedRelationType(): RelationType {
 
 function getSelectedRelationTypeFromElement(element: BoardElement): RelationType {
   const value = String(element.relationType || 'many-to-one')
-  if (value === 'one-to-one' || value === 'many-to-many') {
+  if (value === 'one-to-one' || value === 'many-to-one' || value === 'one-to-many' || value === 'many-to-many') {
     return value
   }
   return 'many-to-one'
@@ -1006,22 +1158,11 @@ function getEvenlySpacedArrowBreakPoints(arrow: BoardElement, breakCount: number
 
 function getDefaultNewArrowBreakPoint(arrow: BoardElement): { x: number; y: number } {
   const path = getArrowPathPoints(arrow)
-  let bestFrom = path[0]!
-  let bestTo = path[path.length - 1]!
-  let bestLength = -1
-  for (let i = 0; i < path.length - 1; i += 1) {
-    const from = path[i]!
-    const to = path[i + 1]!
-    const length = Math.hypot(to.x - from.x, to.y - from.y)
-    if (length > bestLength) {
-      bestLength = length
-      bestFrom = from
-      bestTo = to
-    }
-  }
+  const from = path[path.length - 2]!
+  const to = path[path.length - 1]!
   return {
-    x: (bestFrom.x + bestTo.x) / 2,
-    y: (bestFrom.y + bestTo.y) / 2,
+    x: (from.x + to.x) / 2,
+    y: (from.y + to.y) / 2,
   }
 }
 
@@ -1390,6 +1531,9 @@ function getRelationEndpointKind(type: RelationType, atStart: boolean): 'one' | 
   }
   if (type === 'many-to-many') {
     return 'many'
+  }
+  if (type === 'one-to-many') {
+    return atStart ? 'one' : 'many'
   }
   return atStart ? 'many' : 'one'
 }
@@ -1954,7 +2098,7 @@ function createDraftForTool(pos: { x: number; y: number }): BoardElement | null 
     strokeStyle: board.lineStyle,
   } satisfies Omit<BoardElement, 'type'>
 
-  if (board.activeTool === 'rect' || board.activeTool === 'ellipse' || board.activeTool === 'frame') {
+  if (board.activeTool === 'rect' || board.activeTool === 'ellipse' || board.activeTool === 'frame' || board.activeTool === 'table') {
     const draft: BoardElement = {
       ...base,
       type: board.activeTool,
@@ -1967,6 +2111,11 @@ function createDraftForTool(pos: { x: number; y: number }): BoardElement | null 
       draft.frameIndex = board.getNextFrameIndex()
       draft.name = board.getDefaultFrameName(Number(draft.frameIndex))
       applyFrameStyle(draft)
+    }
+    if (board.activeTool === 'table') {
+      draft.fill = '#ffffff'
+      draft.tableTitle = 'Table'
+      draft.tableFields = []
     }
     return draft
   }
@@ -2098,22 +2247,107 @@ function onPointerDown(event: PointerEvent): void {
     return
   }
 
+  // In creation tools, clicking the current selection should behave like select mode.
+  const hit = hitTestElement(pos.x, pos.y, board.activeSchema.elements, getCanvasContext())
+  if (hit && isSelected(hit.id)) {
+    const selected = findSelectedElement()
+    if (selected && !(event.ctrlKey || event.metaKey)) {
+      const resizeHit = hitResizeHandle(pos.x, pos.y, selected, getCanvasContext())
+      if (resizeHit) {
+        pointer.mode = 'resize'
+        pointer.startElement = deepClone(selected)
+        pointer.resizeHandle = resizeHit.handle
+        pointer.startElements = {}
+        pointer.ctrlPressed = false
+        pointer.initialSelection = []
+        renderCanvas()
+        return
+      }
+    }
+
+    pointer.mode = 'drag'
+    pointer.ctrlPressed = false
+    pointer.initialSelection = []
+    pointer.startElements = board.activeSchema.elements
+      .filter((element) => isSelected(element.id))
+      .reduce<Record<string, BoardElement>>((acc, element) => {
+        acc[element.id] = deepClone(element)
+        return acc
+      }, {})
+    pointer.startElement = null
+    pointer.resizeHandle = null
+    marqueeRect.value = null
+    renderCanvas()
+    return
+  }
+
   const draft = createDraftForTool(pos)
   if (!draft) {
     return
   }
 
   if (board.activeTool === 'text') {
-    board.activeSchema.elements.push(draft)
-    setSingleSelection(draft.id)
-    markDirty()
-    renderCanvas()
+    openTextCreateEditor(pos)
     return
   }
 
   draftElement.value = draft
   pointer.mode = 'draw'
   renderCanvas()
+}
+
+async function onCanvasDoubleClick(event: MouseEvent): Promise<void> {
+  if (!board.activeSchema || board.activeTool !== 'select') {
+    return
+  }
+  const pos = getPointerPosition(event)
+  const hit = hitTestElement(pos.x, pos.y, board.activeSchema.elements, getCanvasContext())
+  if (!hit) {
+    return
+  }
+
+  if (hit.type === 'frame') {
+    if (!isSelected(hit.id)) {
+      setSingleSelection(hit.id)
+    }
+    const currentName = String(hit.name || '').trim() || board.getFrameDisplayName(hit)
+    const nextName = await openPromptDialog({
+      title: 'Rename frame',
+      value: currentName,
+      placeholder: 'Frame name',
+      confirmLabel: 'Save',
+    })
+    if (nextName == null) {
+      return
+    }
+    const trimmed = String(nextName || '').trim()
+    const fallback = board.getDefaultFrameName(Number(hit.frameIndex || 1))
+    const finalName = trimmed || fallback
+    if (String(hit.name || '') === finalName) {
+      return
+    }
+    pushHistoryCheckpoint()
+    hit.name = finalName
+    markDirty()
+    renderCanvas()
+    return
+  }
+
+  if (hit.type === 'text') {
+    if (!isSelected(hit.id)) {
+      setSingleSelection(hit.id)
+    }
+    openTextEditEditor(hit)
+    return
+  }
+
+  if (hit.type !== 'table') {
+    return
+  }
+  if (!isSelected(hit.id)) {
+    setSingleSelection(hit.id)
+  }
+  openTableEditor(hit)
 }
 
 function onPointerMove(event: PointerEvent): void {
@@ -2490,6 +2724,12 @@ function onWindowBlur(): void {
   if (iconEditorState.isOpen) {
     closeIconEditor()
   }
+  if (tableEditorState.isOpen) {
+    closeTableEditor()
+  }
+  if (textEditorState.isOpen) {
+    closeTextEditor()
+  }
 }
 
 function onResize(): void {
@@ -2609,6 +2849,7 @@ onBeforeUnmount(() => {
               @pointermove="onPointerMove"
               @pointerup="onPointerUp"
               @pointerleave="onCanvasPointerLeave"
+              @dblclick="onCanvasDoubleClick"
               @dragover.prevent
               @drop.prevent="onCanvasDrop"
               @wheel.prevent="onCanvasWheel"
@@ -2701,6 +2942,27 @@ onBeforeUnmount(() => {
       @save="saveIconEditor"
       @delete="deleteIconFromEditor"
       @cancel="closeIconEditor"
+    />
+
+    <TableEditModal
+      :is-open="tableEditorState.isOpen"
+      :title="tableEditorState.title"
+      :fields="tableEditorState.fields"
+      @update:title="onTableEditorTitleChange"
+      @update:field="onTableEditorFieldChange"
+      @add-field="addTableEditorField"
+      @remove-field="removeTableEditorField"
+      @save="saveTableEditor"
+      @cancel="closeTableEditor"
+    />
+
+    <TextEditModal
+      :is-open="textEditorState.isOpen"
+      :title="textEditorState.mode === 'create' ? 'Create text' : 'Edit text'"
+      :value="textEditorState.value"
+      @update:value="textEditorState.value = $event"
+      @save="saveTextEditor"
+      @cancel="closeTextEditor"
     />
   </div>
 </template>
