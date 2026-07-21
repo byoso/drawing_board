@@ -33,6 +33,23 @@ function toSvgNumber(value: unknown): number {
   return Math.round(num * 100) / 100
 }
 
+function normalizeRectLikeCanvas(element: BoardElement): { x: number; y: number; w: number; h: number } {
+  const x = Number(element.x || 0)
+  const y = Number(element.y || 0)
+  const w = Number(element.w || 0)
+  const h = Number(element.h || 0)
+  return {
+    x: w < 0 ? x + w : x,
+    y: h < 0 ? y + h : y,
+    w: Math.abs(w),
+    h: Math.abs(h),
+  }
+}
+
+function getRectAngleLikeCanvas(element: BoardElement): 0 | 45 {
+  return Number(element.angle || 0) === 45 ? 45 : 0
+}
+
 type Segment2D = { x1: number; y1: number; x2: number; y2: number }
 
 function getRelationEndpointKind(type: RelationType, atStart: boolean): 'one' | 'many' {
@@ -220,10 +237,11 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
     const shapes: string[] = []
     for (const element of schema.elements) {
       if (element.type === 'frame') {
-        const x = toSvgNumber(Number(element.x || 0) + translateX)
-        const y = toSvgNumber(Number(element.y || 0) + translateY)
-        const w = toSvgNumber(Math.abs(Number(element.w || 0)))
-        const h = toSvgNumber(Math.abs(Number(element.h || 0)))
+        const rect = normalizeRectLikeCanvas(element)
+        const x = toSvgNumber(rect.x + translateX)
+        const y = toSvgNumber(rect.y + translateY)
+        const w = toSvgNumber(rect.w)
+        const h = toSvgNumber(rect.h)
         shapes.push(
           `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${FRAME_STYLE.stroke}" stroke-width="${FRAME_STYLE.strokeWidth}" stroke-dasharray="${FRAME_STYLE.dashArray.join(',')}" />`,
         )
@@ -236,26 +254,75 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
       }
 
       if (element.type === 'rect') {
-        const x = toSvgNumber(Number(element.x || 0) + translateX)
-        const y = toSvgNumber(Number(element.y || 0) + translateY)
-        const w = toSvgNumber(Math.abs(Number(element.w || 0)))
-        const h = toSvgNumber(Math.abs(Number(element.h || 0)))
+        const rect = normalizeRectLikeCanvas(element)
+        const x = toSvgNumber(rect.x + translateX)
+        const y = toSvgNumber(rect.y + translateY)
+        const w = toSvgNumber(rect.w)
+        const h = toSvgNumber(rect.h)
+        const angle = getRectAngleLikeCanvas(element)
+        const cx = toSvgNumber(rect.x + rect.w / 2 + translateX)
+        const cy = toSvgNumber(rect.y + rect.h / 2 + translateY)
         const dash = options.getDashArrayFromStyle(element.strokeStyle)
         shapes.push(
-          `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${RECT_CORNER_RADIUS}" ry="${RECT_CORNER_RADIUS}" fill="${escapeXml(element.fill || 'none')}" stroke="${escapeXml(element.stroke || '#1f2d54')}" stroke-width="${toSvgNumber(element.strokeWidth || 2)}" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
+          `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${RECT_CORNER_RADIUS}" ry="${RECT_CORNER_RADIUS}" fill="${escapeXml(element.fill || 'none')}" stroke="${escapeXml(element.stroke || '#1f2d54')}" stroke-width="${toSvgNumber(element.strokeWidth || 2)}" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} ${angle === 45 ? `transform="rotate(45 ${cx} ${cy})"` : ''} />`,
         )
         continue
       }
 
       if (element.type === 'ellipse') {
-        const x = Number(element.x || 0) + translateX
-        const y = Number(element.y || 0) + translateY
-        const w = Math.abs(Number(element.w || 0))
-        const h = Math.abs(Number(element.h || 0))
+        const rect = normalizeRectLikeCanvas(element)
+        const x = rect.x + translateX
+        const y = rect.y + translateY
+        const w = rect.w
+        const h = rect.h
         const dash = options.getDashArrayFromStyle(element.strokeStyle)
         shapes.push(
           `<ellipse cx="${toSvgNumber(x + w / 2)}" cy="${toSvgNumber(y + h / 2)}" rx="${toSvgNumber(w / 2)}" ry="${toSvgNumber(h / 2)}" fill="${escapeXml(element.fill || 'none')}" stroke="${escapeXml(element.stroke || '#1f2d54')}" stroke-width="${toSvgNumber(element.strokeWidth || 2)}" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
         )
+        continue
+      }
+
+      if (element.type === 'table') {
+        const rect = normalizeRectLikeCanvas(element)
+        const x = rect.x + translateX
+        const y = rect.y + translateY
+        const w = rect.w
+        const h = rect.h
+        const title = String(element.tableTitle || 'Table').trim() || 'Table'
+        const fields = Array.isArray(element.tableFields) ? element.tableFields.map((field) => String(field || '')) : []
+        const stroke = escapeXml(element.stroke || '#1f2d54')
+        const strokeWidth = toSvgNumber(element.strokeWidth || 2)
+        const headerHeight = Math.min(34, Math.max(24, h * 0.28))
+        const rowHeight = 20
+
+        shapes.push(
+          `<rect x="${toSvgNumber(x)}" y="${toSvgNumber(y)}" width="${toSvgNumber(w)}" height="${toSvgNumber(h)}" fill="#ffffff" stroke="${stroke}" stroke-width="${strokeWidth}" />`,
+        )
+        shapes.push(
+          `<rect x="${toSvgNumber(x)}" y="${toSvgNumber(y)}" width="${toSvgNumber(w)}" height="${toSvgNumber(headerHeight)}" fill="#eef4ff" stroke="none" />`,
+        )
+        shapes.push(
+          `<line x1="${toSvgNumber(x)}" y1="${toSvgNumber(y + headerHeight)}" x2="${toSvgNumber(x + w)}" y2="${toSvgNumber(y + headerHeight)}" stroke="${stroke}" stroke-width="${strokeWidth}" />`,
+        )
+        shapes.push(
+          `<text x="${toSvgNumber(x + 10)}" y="${toSvgNumber(y + headerHeight / 2)}" fill="#1f2d54" font-size="14" font-family="Space Grotesk" font-weight="700" dominant-baseline="middle">${escapeXml(title)}</text>`,
+        )
+
+        fields.forEach((field, index) => {
+          const textY = y + headerHeight + rowHeight * index + rowHeight / 2
+          if (textY + rowHeight / 2 > y + h) {
+            return
+          }
+          shapes.push(
+            `<text x="${toSvgNumber(x + 10)}" y="${toSvgNumber(textY)}" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">${escapeXml(field)}</text>`,
+          )
+          const lineY = y + headerHeight + rowHeight * (index + 1)
+          if (lineY < y + h) {
+            shapes.push(
+              `<line x1="${toSvgNumber(x)}" y1="${toSvgNumber(lineY)}" x2="${toSvgNumber(x + w)}" y2="${toSvgNumber(lineY)}" stroke="#dfe7f7" stroke-width="1" />`,
+            )
+          }
+        })
         continue
       }
 
@@ -275,17 +342,20 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
           `<polyline points="${pointsAttr}" fill="none" stroke="${stroke}" stroke-width="${widthValue}" stroke-linejoin="round" stroke-linecap="round" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
         )
 
-        const end = points[points.length - 1]!
-        const prev = points[points.length - 2]!
-        const angle = Math.atan2(end.y - prev.y, end.x - prev.x)
-        const headSize = 12
-        const hx1 = end.x - headSize * Math.cos(angle - Math.PI / 6)
-        const hy1 = end.y - headSize * Math.sin(angle - Math.PI / 6)
-        const hx2 = end.x - headSize * Math.cos(angle + Math.PI / 6)
-        const hy2 = end.y - headSize * Math.sin(angle + Math.PI / 6)
-        shapes.push(
-          `<polygon points="${toSvgNumber(end.x)},${toSvgNumber(end.y)} ${toSvgNumber(hx1)},${toSvgNumber(hy1)} ${toSvgNumber(hx2)},${toSvgNumber(hy2)}" fill="${stroke}" />`,
-        )
+        if (!element.lineOnly) {
+          const end = points[points.length - 1]!
+          const prev = points[points.length - 2]!
+          const angle = Math.atan2(end.y - prev.y, end.x - prev.x)
+          const sw = Number(element.strokeWidth || 2)
+          const headSize = sw * 3 + 6
+          const hx1 = end.x - headSize * Math.cos(angle - Math.PI / 6)
+          const hy1 = end.y - headSize * Math.sin(angle - Math.PI / 6)
+          const hx2 = end.x - headSize * Math.cos(angle + Math.PI / 6)
+          const hy2 = end.y - headSize * Math.sin(angle + Math.PI / 6)
+          shapes.push(
+            `<polygon points="${toSvgNumber(end.x)},${toSvgNumber(end.y)} ${toSvgNumber(hx1)},${toSvgNumber(hy1)} ${toSvgNumber(hx2)},${toSvgNumber(hy2)}" fill="${stroke}" />`,
+          )
+        }
         continue
       }
 
@@ -315,7 +385,7 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
         const endSegments = buildRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false), svgSw)
         for (const segment of [...startSegments, ...endSegments]) {
           shapes.push(
-            `<line x1="${toSvgNumber(segment.x1)}" y1="${toSvgNumber(segment.y1)}" x2="${toSvgNumber(segment.x2)}" y2="${toSvgNumber(segment.y2)}" stroke="${stroke}" stroke-width="${widthValue}" stroke-linecap="round" />`,
+            `<line x1="${toSvgNumber(segment.x1)}" y1="${toSvgNumber(segment.y1)}" x2="${toSvgNumber(segment.x2)}" y2="${toSvgNumber(segment.y2)}" stroke="${stroke}" stroke-width="${widthValue}" stroke-linecap="round" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
           )
         }
         continue
@@ -336,10 +406,11 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
       }
 
       if (element.type === 'icon') {
-        const x = toSvgNumber(Number(element.x || 0) + translateX)
-        const y = toSvgNumber(Number(element.y || 0) + translateY)
-        const w = toSvgNumber(Math.abs(Number(element.w || 0)))
-        const h = toSvgNumber(Math.abs(Number(element.h || 0)))
+        const rect = normalizeRectLikeCanvas(element)
+        const x = toSvgNumber(rect.x + translateX)
+        const y = toSvgNumber(rect.y + translateY)
+        const w = toSvgNumber(rect.w)
+        const h = toSvgNumber(rect.h)
         const href = escapeXml(element.src || '')
         shapes.push(`<image x="${x}" y="${y}" width="${w}" height="${h}" href="${href}" />`)
       }
