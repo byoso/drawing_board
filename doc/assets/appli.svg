@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1301" height="867" viewBox="0 0 1301 867">
+<rect x="0" y="0" width="1301" height="867" fill="#ffffff" />
+<image x="32.25" y="300.79" width="104" height="100.25" href="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRHURuwjAbOAjyXm28GkCtkJBatEei9SnIhW269xeP5_jRCa0AxpxFHqMf7&amp;s=10" />
+<rect x="96.71" y="362.21" width="421.43" height="334.29" rx="8" ry="8" fill="rgba(107, 142, 234, 0.22)" stroke="#6B8EEA" stroke-width="2"   />
+<text x="133.86" y="406.5" fill="#6B8EEA" font-size="30" font-family="Space Grotesk">test</text>
+<image x="1112.71" y="488.21" width="128" height="128" href="https://cdn.iconscout.com/icon/free/png-256/free-vue-dot-js-icon-svg-download-png-3030285.png?f=webp" />
+<ellipse cx="1034.57" cy="671.5" rx="212.14" ry="155" fill="rgba(109, 174, 107, 0.22)" stroke="#6DAE6B" stroke-width="6" stroke-dasharray="10,7" />
+<text x="999.57" y="570.79" fill="#6DAE6B" font-size="30" font-family="Space Grotesk">Truc</text>
+<polyline points="822.43,662.21 523.86,549.36" fill="none" stroke="#C481B9" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="10,7" />
+<polygon points="523.86,549.36 547.54,545.48 539.06,567.93" fill="#C481B9" />
+<polyline points="522.43,587.93 819.57,697.93" fill="none" stroke="#C481B9" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"  />
+<polygon points="819.57,697.93 801.83,700.96 808.08,684.08" fill="#C481B9" />
+<rect x="0" y="0" width="1301" height="866.29" fill="none" stroke="#ff8a00" stroke-width="2" stroke-dasharray="" />
+<text x="10" y="-6" fill="#ff8a00" font-size="24" font-family="Sora" font-weight="700">Appli</text>
+<rect x="286" y="28" width="256" height="272" fill="#ffffff" stroke="#4FA8A6" stroke-width="2" />
+<rect x="286" y="28" width="256" height="34" fill="#eef4ff" stroke="none" />
+<line x1="286" y1="62" x2="542" y2="62" stroke="#4FA8A6" stroke-width="2" />
+<text x="296" y="45" fill="#1f2d54" font-size="14" font-family="Space Grotesk" font-weight="700" dominant-baseline="middle">Toto</text>
+<text x="296" y="72" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">id</text>
+<line x1="286" y1="82" x2="542" y2="82" stroke="#dfe7f7" stroke-width="1" />
+<text x="296" y="92" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">name</text>
+<line x1="286" y1="102" x2="542" y2="102" stroke="#dfe7f7" stroke-width="1" />
+<text x="296" y="112" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">age</text>
+<line x1="286" y1="122" x2="542" y2="122" stroke="#dfe7f7" stroke-width="1" />
+<rect x="830" y="100" width="286" height="306" fill="#ffffff" stroke="#6B8EEA" stroke-width="2" />
+<rect x="830" y="100" width="286" height="34" fill="#eef4ff" stroke="none" />
+<line x1="830" y1="134" x2="1116" y2="134" stroke="#6B8EEA" stroke-width="2" />
+<text x="840" y="117" fill="#1f2d54" font-size="14" font-family="Space Grotesk" font-weight="700" dominant-baseline="middle">Car</text>
+<text x="840" y="144" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">id</text>
+<line x1="830" y1="154" x2="1116" y2="154" stroke="#dfe7f7" stroke-width="1" />
+<text x="840" y="164" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">engine</text>
+<line x1="830" y1="174" x2="1116" y2="174" stroke="#dfe7f7" stroke-width="1" />
+<text x="840" y="184" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">turbo_type</text>
+<line x1="830" y1="194" x2="1116" y2="194" stroke="#dfe7f7" stroke-width="1" />
+<text x="840" y="204" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">#</text>
+<line x1="830" y1="214" x2="1116" y2="214" stroke="#dfe7f7" stroke-width="1" />
+<text x="840" y="224" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle">#</text>
+<line x1="830" y1="234" x2="1116" y2="234" stroke="#dfe7f7" stroke-width="1" />
+<text x="840" y="244" fill="#2d4169" font-size="13" font-family="Space Grotesk" dominant-baseline="middle"># this is a vehicule</text>
+<line x1="830" y1="254" x2="1116" y2="254" stroke="#dfe7f7" stroke-width="1" />
+<polyline points="543.44,156.58 639.44,156.58 639.44,302.58 831.44,302.58" fill="none" stroke="#C481B9" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"  />
+<line x1="549.44" y1="161.58" x2="549.44" y2="151.58" stroke="#C481B9" stroke-width="2" stroke-linecap="round"  />
+<line x1="821.44" y1="302.58" x2="830.44" y2="302.58" stroke="#C481B9" stroke-width="2" stroke-linecap="round"  />
+<line x1="821.44" y1="302.58" x2="830.44" y2="308.58" stroke="#C481B9" stroke-width="2" stroke-linecap="round"  />
+<line x1="821.44" y1="302.58" x2="830.44" y2="296.58" stroke="#C481B9" stroke-width="2" stroke-linecap="round"  />
+</svg>

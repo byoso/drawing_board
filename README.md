@@ -1,7 +1,17 @@
 # Drawing Board
 
 
-This tool is otally free for real, no sinup, no adds, no tricks, just a tool for myself that I share with you all:
+This tool is totally free: no signup, no ads, no tricks. It's just a tool I built for myself and decided to share with everyone. I use it to create plans for software.
+
+![example](doc/assets/appli.svg)
+
+
+Use it directly from this URL, or fork this repo, whatever works best for you.
 
 [https://byoso.neocities.org/tools/drawing-board](https://byoso.neocities.org/tools/drawing-board)
 
+
+## Just a word about the code
+
+This app is 99% AI, a shameless quick vibe-coding, do not expect the best code ever, it just works.
+This app is 99% AI, a shameless quick vibe-coding project. Do not expect the best code ever; it just works.
