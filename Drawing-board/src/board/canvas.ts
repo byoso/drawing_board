@@ -325,14 +325,18 @@ export function drawElement(
     const r = normalizeRect(element)
     const angle = getRectAngle(element)
     if (angle === 45) {
+      ctx.save()
       ctx.translate(r.x + r.w / 2, r.y + r.h / 2)
       ctx.rotate((angle * Math.PI) / 180)
       drawRoundedRectPath(ctx, -r.w / 2, -r.h / 2, r.w, r.h)
+      ctx.fill()
+      ctx.stroke()
+      ctx.restore()
     } else {
       drawRoundedRectPath(ctx, r.x, r.y, r.w, r.h)
+      ctx.fill()
+      ctx.stroke()
     }
-    ctx.fill()
-    ctx.stroke()
   }
 
   if (element.type === 'ellipse') {
@@ -489,14 +493,33 @@ export function drawElement(
   }
 
   if (options.selected) {
-    const b = getElementBounds(element, ctx)
-    if (b) {
+    if (element.type === 'rect') {
+      const r = normalizeRect(element)
+      const angle = getRectAngle(element)
+      const padding = 4
       ctx.save()
       ctx.strokeStyle = '#ff5f2a'
       ctx.lineWidth = 1
       ctx.setLineDash([6, 4])
-      ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8)
+      if (angle === 45) {
+        ctx.translate(r.x + r.w / 2, r.y + r.h / 2)
+        ctx.rotate((angle * Math.PI) / 180)
+        drawRoundedRectPath(ctx, -r.w / 2 - padding, -r.h / 2 - padding, r.w + padding * 2, r.h + padding * 2)
+      } else {
+        drawRoundedRectPath(ctx, r.x - padding, r.y - padding, r.w + padding * 2, r.h + padding * 2)
+      }
+      ctx.stroke()
       ctx.restore()
+    } else {
+      const b = getElementBounds(element, ctx)
+      if (b) {
+        ctx.save()
+        ctx.strokeStyle = '#ff5f2a'
+        ctx.lineWidth = 1
+        ctx.setLineDash([6, 4])
+        ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8)
+        ctx.restore()
+      }
     }
   }
 

@@ -113,7 +113,7 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
     if (!selected) {
       return null
     }
-    if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow' || selected.type === 'relation') {
+    if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow' || selected.type === 'relation' || selected.type === 'table') {
       return selected.strokeStyle === 'dashed' ? 'dashed' : 'solid'
     }
     return null
@@ -470,8 +470,8 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
   function getApplicablePropertiesForSelection(): { hasColor: boolean; hasLineStyle: boolean; hasSize: boolean } {
     const elements = getSelectedElements()
     const hasColor = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation' || element.type === 'table')
-    const hasLineStyle = elements.some((element) => element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation')
-    const hasSize = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation')
+    const hasLineStyle = elements.some((element) => element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation' || element.type === 'table')
+    const hasSize = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation' || element.type === 'table')
     return { hasColor, hasLineStyle, hasSize }
   }
 
@@ -512,7 +512,7 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
       if (!idSet.has(element.id)) {
         continue
       }
-      if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation') {
+      if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation' || element.type === 'table') {
         element.strokeStyle = style
       }
     }
@@ -536,7 +536,7 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
         element.fontSize = preset.fontSize
         continue
       }
-      if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation') {
+      if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation' || element.type === 'table') {
         element.strokeWidth = preset.strokeWidth
       }
     }

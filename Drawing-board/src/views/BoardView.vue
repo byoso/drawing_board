@@ -170,6 +170,24 @@ const canvasCursor = computed(() => {
   }
   return 'default'
 })
+const effectiveActiveColor = computed<string>(() => {
+  if (selectedElementIds.value.length !== 1) {
+    return board.activeColor
+  }
+  return getSelectedColor() || board.activeColor
+})
+const effectiveLineStyle = computed<'solid' | 'dashed'>(() => {
+  if (selectedElementIds.value.length !== 1) {
+    return board.lineStyle
+  }
+  return getSelectedLineStyle() || board.lineStyle
+})
+const effectiveDrawSize = computed<'small' | 'medium' | 'big'>(() => {
+  if (selectedElementIds.value.length !== 1) {
+    return board.drawSize
+  }
+  return getSelectedSize() || board.drawSize
+})
 
 let renderCanvasImpl: (() => void) | null = null
 let getCachedIconImageImpl: ((src: string) => HTMLImageElement | null) | null = null
@@ -648,6 +666,30 @@ function onToolSetChange(toolSet: ToolSetId): void {
   board.setActiveToolSet(toolSet)
 }
 
+function onColorAction(color: string): void {
+  if (selectedElementIds.value.length > 0 && getApplicablePropertiesForSelection().hasColor) {
+    applyColorToSelection(color)
+    return
+  }
+  board.activeColor = color
+}
+
+function onLineStyleAction(style: 'solid' | 'dashed'): void {
+  if (selectedElementIds.value.length > 0 && getApplicablePropertiesForSelection().hasLineStyle) {
+    applyLineStyle(style)
+    return
+  }
+  board.lineStyle = style
+}
+
+function onDrawSizeAction(size: 'small' | 'medium' | 'big'): void {
+  if (selectedElementIds.value.length > 0 && getApplicablePropertiesForSelection().hasSize) {
+    applySize(size)
+    return
+  }
+  board.drawSize = size
+}
+
 onMounted(() => {
   board.init()
   board.store.schemas.forEach((schema) => seedSchemaHistory(schema.id, schema.elements))
@@ -689,9 +731,10 @@ onBeforeUnmount(() => {
           :tools="board.tools"
           :active-tool="board.activeTool"
           :color-palette="board.colorPalette"
-          :active-color="board.activeColor"
-          :line-style="board.lineStyle"
-          :draw-size="board.drawSize"
+          :active-color="effectiveActiveColor"
+          :line-style="effectiveLineStyle"
+          :draw-size="effectiveDrawSize"
+          :show-line-style-draw-option="board.activeTool !== 'text'"
           :show-draw-options="board.activeTool !== 'frame' && !(board.activeTool === 'select' && selectedElementIds.length > 0)"
           :show-properties="board.activeTool === 'select' && selectedElementIds.length > 0"
           :selected-count="selectedElementIds.length"
@@ -720,9 +763,9 @@ onBeforeUnmount(() => {
           :can-shift-frame-index-up="canShiftSelectedFrameIndex(1)"
           @select-tool-set="onToolSetChange"
           @select-tool="board.activeTool = $event"
-          @set-active-color="board.activeColor = $event"
-          @set-line-style="board.lineStyle = $event"
-          @set-draw-size="board.drawSize = $event"
+          @set-active-color="onColorAction"
+          @set-line-style="onLineStyleAction"
+          @set-draw-size="onDrawSizeAction"
           @apply-color="applyColorToSelection"
           @apply-line-style="applyLineStyle"
           @apply-size="applySize"

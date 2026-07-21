@@ -11,6 +11,7 @@ defineProps<{
   lineStyle: 'solid' | 'dashed'
   drawSize: 'small' | 'medium' | 'big'
   showDrawOptions: boolean
+  showLineStyleDrawOption: boolean
   showProperties: boolean
   selectedCount: number
   selectedIsFrame: boolean
@@ -126,8 +127,8 @@ function onRelationTypeChange(event: Event): void {
     </div>
 
     <div v-if="showDrawOptions" class="draw-options" aria-label="Drawing options">
-      <p class="palette-title">Line style</p>
-      <div class="options-row">
+      <p v-if="showLineStyleDrawOption" class="palette-title">Line style</p>
+      <div v-if="showLineStyleDrawOption" class="options-row">
         <button class="option-chip" :class="{ active: lineStyle === 'solid' }" @click="emit('set-line-style', 'solid')">Solid</button>
         <button class="option-chip" :class="{ active: lineStyle === 'dashed' }" @click="emit('set-line-style', 'dashed')">Dashed</button>
       </div>
