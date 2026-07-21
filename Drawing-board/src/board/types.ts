@@ -22,6 +22,7 @@ export interface BoardElement {
   y2?: number
   breaks?: number
   orthogonal?: boolean
+  lineOnly?: boolean
   relationType?: RelationType
   tableTitle?: string
   tableFields?: string[]

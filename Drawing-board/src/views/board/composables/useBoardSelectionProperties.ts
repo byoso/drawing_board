@@ -22,6 +22,7 @@ type UseBoardSelectionPropertiesOptions = {
   newRectSquare: Ref<boolean>
   newArrowBreaks: Ref<number>
   newArrowOrthogonal: Ref<boolean>
+  newArrowLineOnly: Ref<boolean>
   newRelationBreaks: Ref<number>
   newRelationOrthogonal: Ref<boolean>
   newRelationType: Ref<RelationType>
@@ -315,6 +316,42 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
     options.renderCanvas()
   }
 
+  function getSelectedArrowLineOnly(): boolean {
+    const connector = getSelectedConnector()
+    if (connector) {
+      return Boolean(connector.lineOnly)
+    }
+    if (options.getActiveTool() === 'arrow') {
+      return Boolean(options.newArrowLineOnly.value)
+    }
+    return false
+  }
+
+  function setSelectedArrowLineOnly(value: boolean): void {
+    const connector = getSelectedConnector()
+    if (!connector) {
+      if (options.getActiveTool() !== 'arrow') {
+        return
+      }
+      if (Boolean(options.newArrowLineOnly.value) === value) {
+        return
+      }
+      options.newArrowLineOnly.value = value
+      if (options.getPointerMode() === 'draw' && options.draftElement.value && isConnectorElement(options.draftElement.value)) {
+        options.draftElement.value.lineOnly = value
+        options.renderCanvas()
+      }
+      return
+    }
+    if (Boolean(connector.lineOnly) === value) {
+      return
+    }
+    options.pushHistoryCheckpoint()
+    connector.lineOnly = value
+    options.markDirty()
+    options.renderCanvas()
+  }
+
   function setSelectedArrowOrthogonal(value: boolean): void {
     const connector = getSelectedConnector()
     if (!connector) {
@@ -523,12 +560,14 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
     getSelectedRelation,
     getSelectedArrowBreaks,
     getSelectedArrowOrthogonal,
+    getSelectedArrowLineOnly,
     getSelectedRelationType,
     getSelectedRelationTypeFromElement,
     ensureArrowBreakPoints,
     getEvenlySpacedArrowBreakPoints,
     shiftSelectedArrowBreaks,
     setSelectedArrowOrthogonal,
+    setSelectedArrowLineOnly,
     setSelectedRelationType,
     setSelectedRectAngle,
     setSelectedRectSquare,

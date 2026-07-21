@@ -43,6 +43,7 @@ const newRectAngle = ref<RectAngle>(0)
 const newRectSquare = ref(false)
 const newArrowBreaks = ref(0)
 const newArrowOrthogonal = ref(false)
+const newArrowLineOnly = ref(false)
 const newRelationBreaks = ref(2)
 const newRelationOrthogonal = ref(true)
 const newRelationType = ref<RelationType>('many-to-one')
@@ -280,11 +281,13 @@ const {
   getSelectedRelation,
   getSelectedArrowBreaks,
   getSelectedArrowOrthogonal,
+  getSelectedArrowLineOnly,
   getSelectedRelationType,
   getSelectedRelationTypeFromElement,
   getEvenlySpacedArrowBreakPoints,
   shiftSelectedArrowBreaks,
   setSelectedArrowOrthogonal,
+  setSelectedArrowLineOnly,
   setSelectedRelationType,
   setSelectedRectAngle,
   setSelectedRectSquare,
@@ -303,6 +306,7 @@ const {
   newRectSquare,
   newArrowBreaks,
   newArrowOrthogonal,
+  newArrowLineOnly,
   newRelationBreaks,
   newRelationOrthogonal,
   newRelationType,
@@ -455,6 +459,7 @@ const {
   saveCurrentSchemaAsPng,
   saveCurrentSchemaAsSvg,
   saveSelectedFrameAsPng,
+  copySelectedFramePngToClipboard,
   saveSelectedFrameAsSvg,
 } = useBoardSchemaImageExport({
   getActiveSchema: () => board.activeSchema,
@@ -496,6 +501,7 @@ const { onPointerDown, onPointerMove, onPointerUp } = useBoardPointerInteraction
   newRectSquare,
   newArrowBreaks,
   newArrowOrthogonal,
+  newArrowLineOnly,
   newRelationBreaks,
   newRelationOrthogonal,
   newRelationType,
@@ -667,13 +673,10 @@ onBeforeUnmount(() => {
     <section class="board-shell" :class="{ 'slideshow-mode': isSlideshowMode }">
       <BoardTopBar
         v-if="!isSlideshowMode"
-        :show-frame-actions="Boolean(getSelectedFrame())"
         @save-svg="saveCurrentSchemaAsSvg"
         @save-png="saveCurrentSchemaAsPng"
         @export-json="exportCurrentSchema"
         @import-json="openImportPicker"
-        @save-frame-png="saveSelectedFrameAsPng"
-        @save-frame-svg="saveSelectedFrameAsSvg"
         @save-schema="saveCurrentSchema"
         @new-schema="createSchema"
       />
@@ -703,6 +706,7 @@ onBeforeUnmount(() => {
           :selected-rect-square="getSelectedRectSquare()"
           :selected-arrow-breaks="getSelectedArrowBreaks()"
           :selected-arrow-orthogonal="getSelectedArrowOrthogonal()"
+          :selected-arrow-line-only="getSelectedArrowLineOnly()"
           :selected-relation-type="getSelectedRelationType()"
           :can-increment-arrow-breaks="getSelectedArrowBreaks() < 8"
           :can-decrement-arrow-breaks="getSelectedArrowBreaks() > 0"
@@ -726,10 +730,14 @@ onBeforeUnmount(() => {
           @rect-square-change="setSelectedRectSquare"
           @arrow-breaks-delta="shiftSelectedArrowBreaks"
           @arrow-orthogonal-change="setSelectedArrowOrthogonal"
+          @arrow-line-only-change="setSelectedArrowLineOnly"
           @relation-type-change="setSelectedRelationType"
           @frame-name-change="onSelectedFrameNameChange"
           @frame-index-change="onSelectedFrameIndexInputChange"
           @frame-index-shift="shiftSelectedFrameIndex"
+          @save-frame-png="saveSelectedFrameAsPng"
+          @copy-frame-png-clipboard="copySelectedFramePngToClipboard"
+          @save-frame-svg="saveSelectedFrameAsSvg"
         />
 
         <main class="canvas-wrap" :class="{ 'slideshow-mode': isSlideshowMode }">

@@ -56,7 +56,9 @@ function getRelationEndpointSegments(
   tip: ArrowPoint,
   inner: ArrowPoint,
   kind: 'one' | 'many',
+  strokeWidth: number,
 ): LineSegment[] {
+  const sw = Math.max(1, strokeWidth)
   const dx = tip.x - inner.x
   const dy = tip.y - inner.y
   const length = Math.hypot(dx, dy) || 1
@@ -66,9 +68,10 @@ function getRelationEndpointSegments(
   const py = ux
 
   if (kind === 'one') {
-    const centerX = tip.x - ux * 4
-    const centerY = tip.y - uy * 4
-    const half = 5
+    const offset = Math.round(sw * 3)
+    const half = sw * 2 + 1
+    const centerX = tip.x - ux * offset
+    const centerY = tip.y - uy * offset
     return [
       {
         x1: centerX - px * half,
@@ -79,11 +82,12 @@ function getRelationEndpointSegments(
     ]
   }
 
-  const baseX = tip.x - ux * 10
-  const baseY = tip.y - uy * 10
+  const base = sw * 4 + 2
+  const spread = sw * 2 + 2
+  const baseX = tip.x - ux * base
+  const baseY = tip.y - uy * base
   const centerTipX = tip.x - ux * 1
   const centerTipY = tip.y - uy * 1
-  const spread = 6
   return [
     { x1: baseX, y1: baseY, x2: centerTipX, y2: centerTipY },
     { x1: baseX, y1: baseY, x2: centerTipX + px * spread, y2: centerTipY + py * spread },
@@ -119,8 +123,18 @@ export function getArrowPathPoints(element: BoardElement): ArrowPoint[] {
 
   const legacyForceSquare = (element as { forceSquarePath?: unknown }).forceSquarePath
   const isOrthogonal = Boolean(element.orthogonal ?? legacyForceSquare)
-  if (!isOrthogonal || breaks.length === 0) {
+  if (!isOrthogonal) {
     return [start, ...breaks, end]
+  }
+
+  // Orthogonal with no user-defined breaks: generate a single implicit elbow (L-shape).
+  if (breaks.length === 0) {
+    const dx = Math.abs(end.x - start.x)
+    const dy = Math.abs(end.y - start.y)
+    const elbow = dx >= dy
+      ? { x: end.x, y: start.y }   // horizontal first, then vertical
+      : { x: start.x, y: end.y }   // vertical first, then horizontal
+    return [start, elbow, end]
   }
 
   const orthogonalBreaks: ArrowPoint[] = []
@@ -412,15 +426,18 @@ export function drawElement(
     }
     ctx.stroke()
 
-    const angle = Math.atan2(end.y - prev.y, end.x - prev.x)
-    const size = 12
-    ctx.beginPath()
-    ctx.moveTo(end.x, end.y)
-    ctx.lineTo(end.x - size * Math.cos(angle - Math.PI / 6), end.y - size * Math.sin(angle - Math.PI / 6))
-    ctx.lineTo(end.x - size * Math.cos(angle + Math.PI / 6), end.y - size * Math.sin(angle + Math.PI / 6))
-    ctx.closePath()
-    ctx.fillStyle = String(element.stroke || '#1f2d54')
-    ctx.fill()
+    if (!element.lineOnly) {
+      const angle = Math.atan2(end.y - prev.y, end.x - prev.x)
+      const sw = Number(element.strokeWidth || 2)
+      const size = sw * 3 + 6
+      ctx.beginPath()
+      ctx.moveTo(end.x, end.y)
+      ctx.lineTo(end.x - size * Math.cos(angle - Math.PI / 6), end.y - size * Math.sin(angle - Math.PI / 6))
+      ctx.lineTo(end.x - size * Math.cos(angle + Math.PI / 6), end.y - size * Math.sin(angle + Math.PI / 6))
+      ctx.closePath()
+      ctx.fillStyle = String(element.stroke || '#1f2d54')
+      ctx.fill()
+    }
   }
 
   if (element.type === 'relation') {
@@ -442,8 +459,9 @@ export function drawElement(
     ctx.stroke()
 
     const relationType = getRelationType(element)
-    const startSegments = getRelationEndpointSegments(startPoint, next, getRelationEndpointKind(relationType, true))
-    const endSegments = getRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false))
+    const sw = Number(element.strokeWidth || 2)
+    const startSegments = getRelationEndpointSegments(startPoint, next, getRelationEndpointKind(relationType, true), sw)
+    const endSegments = getRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false), sw)
 
     ctx.save()
     ctx.strokeStyle = String(element.stroke || '#1f2d54')
@@ -564,7 +582,7 @@ export function hitTestElement(
     }
 
     const angle = Math.atan2(end.y - prev.y, end.x - prev.x)
-    const size = 12
+    const size = Number((element as { strokeWidth?: unknown }).strokeWidth || 2) * 3 + 6
     const hx1 = end.x - size * Math.cos(angle - Math.PI / 6)
     const hy1 = end.y - size * Math.sin(angle - Math.PI / 6)
     const hx2 = end.x - size * Math.cos(angle + Math.PI / 6)
@@ -600,9 +618,10 @@ export function hitTestElement(
     const next = points[1]!
     const prev = points[points.length - 2]!
     const end = points[points.length - 1]!
+    const hitSw = Number(element.strokeWidth || 2)
     const endpointSegments = [
-      ...getRelationEndpointSegments(start, next, getRelationEndpointKind(relationType, true)),
-      ...getRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false)),
+      ...getRelationEndpointSegments(start, next, getRelationEndpointKind(relationType, true), hitSw),
+      ...getRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false), hitSw),
     ]
     return endpointSegments.some(
       (segment) => distancePointToSegment(px, py, segment.x1, segment.y1, segment.x2, segment.y2) <= lineTolerance,

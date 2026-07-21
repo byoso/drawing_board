@@ -31,6 +31,7 @@ type UseBoardPointerInteractionsArgs = {
   newRectSquare: Ref<boolean>
   newArrowBreaks: Ref<number>
   newArrowOrthogonal: Ref<boolean>
+  newArrowLineOnly: Ref<boolean>
   newRelationBreaks: Ref<number>
   newRelationOrthogonal: Ref<boolean>
   newRelationType: Ref<RelationType>
@@ -71,6 +72,7 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
     newRectSquare,
     newArrowBreaks,
     newArrowOrthogonal,
+    newArrowLineOnly,
     newRelationBreaks,
     newRelationOrthogonal,
     newRelationType,
@@ -386,6 +388,7 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
         y2: pos.y,
         breaks,
         orthogonal: Boolean(newArrowOrthogonal.value),
+        lineOnly: Boolean(newArrowLineOnly.value),
         breakPoints: [],
       }
       draft.breakPoints = getEvenlySpacedArrowBreakPoints(draft, breaks)

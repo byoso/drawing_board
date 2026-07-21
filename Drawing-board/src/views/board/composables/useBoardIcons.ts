@@ -379,10 +379,27 @@ export function useBoardIcons(options: UseBoardIconsOptions) {
     if (!src) {
       return null
     }
+    const cached = options.iconImageCache.value[src]
+    if (cached && (cached as HTMLImageElement & { _corsReady?: boolean })._corsReady !== false) {
+      if (!cached.crossOrigin) {
+        // Already loaded without crossOrigin – evict so it reloads with CORS.
+        delete options.iconImageCache.value[src]
+      } else {
+        return cached
+      }
+    }
     if (!options.iconImageCache.value[src]) {
-      const image = new Image()
-      image.onload = () => options.renderCanvas()
-      image.onerror = () => options.renderCanvas()
+      const image = new Image() as HTMLImageElement & { _corsReady?: boolean }
+      image.crossOrigin = 'anonymous'
+      image.onload = () => {
+        image._corsReady = true
+        options.renderCanvas()
+      }
+      image.onerror = () => {
+        // CORS or network failure – clear entry so the next call retries.
+        delete options.iconImageCache.value[src]
+        options.renderCanvas()
+      }
       image.src = src
       options.iconImageCache.value[src] = image
     }

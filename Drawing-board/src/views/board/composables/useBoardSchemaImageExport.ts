@@ -52,7 +52,9 @@ function buildRelationEndpointSegments(
   tip: { x: number; y: number },
   inner: { x: number; y: number },
   kind: 'one' | 'many',
+  strokeWidth: number,
 ): Segment2D[] {
+  const sw = Math.max(1, strokeWidth)
   const dx = tip.x - inner.x
   const dy = tip.y - inner.y
   const length = Math.hypot(dx, dy) || 1
@@ -62,9 +64,10 @@ function buildRelationEndpointSegments(
   const py = ux
 
   if (kind === 'one') {
-    const centerX = tip.x - ux * 4
-    const centerY = tip.y - uy * 4
-    const half = 5
+    const offset = Math.round(sw * 3)
+    const half = sw * 2 + 1
+    const centerX = tip.x - ux * offset
+    const centerY = tip.y - uy * offset
     return [
       {
         x1: centerX - px * half,
@@ -75,11 +78,12 @@ function buildRelationEndpointSegments(
     ]
   }
 
-  const baseX = tip.x - ux * 10
-  const baseY = tip.y - uy * 10
+  const base = sw * 4 + 2
+  const spread = sw * 2 + 2
+  const baseX = tip.x - ux * base
+  const baseY = tip.y - uy * base
   const centerTipX = tip.x - ux * 1
   const centerTipY = tip.y - uy * 1
-  const spread = 6
   return [
     { x1: baseX, y1: baseY, x2: centerTipX, y2: centerTipY },
     { x1: baseX, y1: baseY, x2: centerTipX + px * spread, y2: centerTipY + py * spread },
@@ -186,7 +190,12 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
     }
     outCtx.restore()
 
-    return await new Promise((resolve) => outCanvas.toBlob((result) => resolve(result), 'image/png'))
+    try {
+      return await new Promise((resolve) => outCanvas.toBlob((result) => resolve(result), 'image/png'))
+    } catch {
+      options.showToast('PNG export failed: some icons have cross-origin restrictions. Try re-adding them as data URLs.', 'error')
+      return null
+    }
   }
 
   function buildSchemaSvgString(exportBounds: Bounds | null = null): string | null {
@@ -301,8 +310,9 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
         const next = points[1]!
         const prev = points[points.length - 2]!
         const end = points[points.length - 1]!
-        const startSegments = buildRelationEndpointSegments(start, next, getRelationEndpointKind(relationType, true))
-        const endSegments = buildRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false))
+        const svgSw = Number(element.strokeWidth || 2)
+        const startSegments = buildRelationEndpointSegments(start, next, getRelationEndpointKind(relationType, true), svgSw)
+        const endSegments = buildRelationEndpointSegments(end, prev, getRelationEndpointKind(relationType, false), svgSw)
         for (const segment of [...startSegments, ...endSegments]) {
           shapes.push(
             `<line x1="${toSvgNumber(segment.x1)}" y1="${toSvgNumber(segment.y1)}" x2="${toSvgNumber(segment.x2)}" y2="${toSvgNumber(segment.y2)}" stroke="${stroke}" stroke-width="${widthValue}" stroke-linecap="round" />`,
@@ -376,6 +386,23 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
     options.showToast('Frame PNG downloaded.')
   }
 
+  async function copySelectedFramePngToClipboard(): Promise<void> {
+    const bounds = getSelectedFrameExportBounds()
+    if (!bounds) {
+      return
+    }
+    const blob = await buildSchemaPngBlob(bounds)
+    if (!blob) {
+      return
+    }
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      options.showToast('Frame PNG copied to clipboard.')
+    } catch {
+      options.showToast('Clipboard write failed. Your browser may not support it.', 'error')
+    }
+  }
+
   function saveSelectedFrameAsSvg(): void {
     const bounds = getSelectedFrameExportBounds()
     if (!bounds) {
@@ -394,6 +421,7 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
     saveCurrentSchemaAsPng,
     saveCurrentSchemaAsSvg,
     saveSelectedFrameAsPng,
+    copySelectedFramePngToClipboard,
     saveSelectedFrameAsSvg,
   }
 }

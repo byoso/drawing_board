@@ -24,6 +24,7 @@ defineProps<{
   selectedRectSquare: boolean
   selectedArrowBreaks: number
   selectedArrowOrthogonal: boolean
+  selectedArrowLineOnly: boolean
   selectedRelationType: RelationType
   canIncrementArrowBreaks: boolean
   canDecrementArrowBreaks: boolean
@@ -50,10 +51,14 @@ const emit = defineEmits<{
   (e: 'rect-square-change', value: boolean): void
   (e: 'arrow-breaks-delta', delta: number): void
   (e: 'arrow-orthogonal-change', value: boolean): void
+  (e: 'arrow-line-only-change', value: boolean): void
   (e: 'relation-type-change', value: RelationType): void
   (e: 'frame-name-change', value: string): void
   (e: 'frame-index-change', value: number): void
   (e: 'frame-index-shift', delta: number): void
+  (e: 'save-frame-png'): void
+  (e: 'copy-frame-png-clipboard'): void
+  (e: 'save-frame-svg'): void
 }>()
 
 function onToolSetChange(event: Event): void {
@@ -174,6 +179,12 @@ function onRelationTypeChange(event: Event): void {
         </div>
       </div>
 
+      <div v-if="selectedIsFrame" class="frame-export-actions">
+        <button class="button is-small png-save-btn frame-export-btn" @click="emit('save-frame-png')">Frame PNG</button>
+        <button class="button is-small frame-export-btn" @click="emit('copy-frame-png-clipboard')">PNG clipboard</button>
+        <button class="button is-small svg-save-btn frame-export-btn" @click="emit('save-frame-svg')">Frame SVG</button>
+      </div>
+
       <div v-if="!selectedIsFrame && hasColorProperty" class="color-palette">
         <p class="palette-title">Color</p>
         <div class="palette-grid">
@@ -252,6 +263,17 @@ function onRelationTypeChange(event: Event): void {
         </label>
       </div>
 
+      <div v-if="selectedIsArrowLike && !selectedIsRelation" class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedArrowLineOnly"
+            @change="emit('arrow-line-only-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Line only
+        </label>
+      </div>
+
       <div v-if="selectedIsRelation" class="options-row">
         <p class="palette-title">Relation type</p>
         <label class="option-chip" :class="{ active: selectedRelationType === 'one-to-one' }">
@@ -317,6 +339,17 @@ function onRelationTypeChange(event: Event): void {
             @change="onArrowOrthogonalChange"
           >
           Orthogonal
+        </label>
+      </div>
+
+      <div v-if="activeTool === 'arrow'" class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedArrowLineOnly"
+            @change="emit('arrow-line-only-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Line only
         </label>
       </div>
 
