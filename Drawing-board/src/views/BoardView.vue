@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { deepClone, hexToRgba, uid } from '@/board/utils'
 import { downloadJsonFile, safeJsonParse } from '@/board/jsonTransfer'
 import { FRAME_STYLE, RECT_CORNER_RADIUS, WORLD_HEIGHT, WORLD_WIDTH } from '@/board/constants'
@@ -125,6 +125,9 @@ const viewport = reactive({
   offsetY: 0,
 })
 
+const isSlideshowMode = ref(false)
+const slideshowFrameIndex = ref(0)
+
 const pointer = reactive<{
   mode: 'idle' | 'draw' | 'drag' | 'resize' | 'pan'
   startX: number
@@ -156,6 +159,19 @@ const pointer = reactive<{
 })
 
 const zoomPercent = computed(() => Math.round(viewport.zoom * 100))
+const viewportOriginX = computed(() => Math.round(viewport.offsetX))
+const viewportOriginY = computed(() => Math.round(viewport.offsetY))
+const activeFrames = computed<BoardElement[]>(() => {
+  if (!board.activeSchema) {
+    return []
+  }
+  return board.activeSchema.elements
+    .filter((element) => element.type === 'frame')
+    .sort((a, b) => Number(a.frameIndex || 0) - Number(b.frameIndex || 0))
+})
+const canStartSlideshow = computed(() => activeFrames.value.length > 0)
+const canGoPreviousSlide = computed(() => isSlideshowMode.value && slideshowFrameIndex.value > 0)
+const canGoNextSlide = computed(() => isSlideshowMode.value && slideshowFrameIndex.value < activeFrames.value.length - 1)
 const iconSets = computed(() => board.store.iconSets)
 const selectedElementId = computed<string | null>(() => {
   if (selectedElementIds.value.length !== 1) {
@@ -813,6 +829,9 @@ function onIconDragStart(iconSetId: string, iconId: string, event: DragEvent): v
 }
 
 async function onCanvasDrop(event: DragEvent): Promise<void> {
+  if (isSlideshowMode.value) {
+    return
+  }
   if (!board.activeSchema || !event.dataTransfer) {
     return
   }
@@ -1416,12 +1435,7 @@ function applySize(size: 'small' | 'medium' | 'big'): void {
 }
 
 function getFramesForActiveSchema(): BoardElement[] {
-  if (!board.activeSchema) {
-    return []
-  }
-  return board.activeSchema.elements
-    .filter((element) => element.type === 'frame')
-    .sort((a, b) => Number(a.frameIndex || 0) - Number(b.frameIndex || 0))
+  return activeFrames.value
 }
 
 function getSelectedFrameName(): string {
@@ -1519,12 +1533,69 @@ function focusFrame(frameId: string): void {
   if (!frame) {
     return
   }
+  focusFrameElement(frame, true)
+}
+
+function focusFrameElement(frame: BoardElement, keepSelection = true): void {
   const bounds = getElementBounds(frame, getCanvasContext())
   if (bounds) {
     focusViewportOnBounds(bounds)
   }
-  setSingleSelection(frameId)
+  if (keepSelection) {
+    setSingleSelection(frame.id)
+  } else {
+    clearSelection()
+  }
   renderCanvas()
+}
+
+function focusFrameByIndex(index: number, keepSelection = false): void {
+  const frames = activeFrames.value
+  if (frames.length === 0) {
+    return
+  }
+  const safeIndex = clamp(index, 0, frames.length - 1)
+  slideshowFrameIndex.value = safeIndex
+  const frame = frames[safeIndex]
+  if (!frame) {
+    return
+  }
+  focusFrameElement(frame, keepSelection)
+}
+
+async function startSlideshow(): Promise<void> {
+  const frames = activeFrames.value
+  if (frames.length === 0) {
+    return
+  }
+  const selectedFrame = getSelectedFrame()
+  const selectedIndex = selectedFrame ? frames.findIndex((frame) => frame.id === selectedFrame.id) : -1
+  slideshowFrameIndex.value = selectedIndex >= 0 ? selectedIndex : 0
+  isSlideshowMode.value = true
+  await nextTick()
+  focusFrameByIndex(slideshowFrameIndex.value, false)
+}
+
+function stopSlideshow(): void {
+  if (!isSlideshowMode.value) {
+    return
+  }
+  isSlideshowMode.value = false
+  renderCanvas()
+}
+
+function goToPreviousSlide(): void {
+  if (!canGoPreviousSlide.value) {
+    return
+  }
+  focusFrameByIndex(slideshowFrameIndex.value - 1, false)
+}
+
+function goToNextSlide(): void {
+  if (!canGoNextSlide.value) {
+    return
+  }
+  focusFrameByIndex(slideshowFrameIndex.value + 1, false)
 }
 
 async function buildSchemaPngBlob(exportBounds: { x: number; y: number; w: number; h: number } | null = null): Promise<Blob | null> {
@@ -2325,8 +2396,10 @@ function onPointerDown(event: PointerEvent): void {
     return
   }
 
-  // Pan with middle click or Space + left click to match legacy behavior.
-  if (event.button === 1 || (event.button === 0 && isSpacePressed.value)) {
+  // Pan with middle click or Space + left click in edit mode.
+  // In slideshow mode, left click always pans to keep navigation fluid.
+  const canPanWithLeftButton = isSpacePressed.value || isSlideshowMode.value
+  if (event.button === 1 || (event.button === 0 && canPanWithLeftButton)) {
     const canvasPos = getCanvasPosition(event)
     pointer.mode = 'pan'
     pointer.panStartCanvasX = canvasPos.x
@@ -2335,6 +2408,10 @@ function onPointerDown(event: PointerEvent): void {
     pointer.panStartOffsetY = viewport.offsetY
     marqueeRect.value = null
     event.preventDefault()
+    return
+  }
+
+  if (isSlideshowMode.value) {
     return
   }
 
@@ -2459,6 +2536,9 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 async function onCanvasDoubleClick(event: MouseEvent): Promise<void> {
+  if (isSlideshowMode.value) {
+    return
+  }
   if (!board.activeSchema) {
     return
   }
@@ -2878,6 +2958,29 @@ const shortcutsHandler = createBoardShortcutsHandler({
 })
 
 function onGlobalKeyDown(event: KeyboardEvent): void {
+  if (isSlideshowMode.value) {
+    if (event.code === 'Space' && !isEditableTarget(event.target)) {
+      isSpacePressed.value = true
+      event.preventDefault()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      stopSlideshow()
+      return
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      goToPreviousSlide()
+      return
+    }
+    if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      goToNextSlide()
+      return
+    }
+    return
+  }
   if (event.code === 'Space' && !isEditableTarget(event.target)) {
     isSpacePressed.value = true
     event.preventDefault()
@@ -2944,9 +3047,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="container" id="drawing-board-app">
-    <section class="board-shell">
+  <div class="container" id="drawing-board-app" :class="{ 'slideshow-mode': isSlideshowMode }">
+    <section class="board-shell" :class="{ 'slideshow-mode': isSlideshowMode }">
       <BoardTopBar
+        v-if="!isSlideshowMode"
         :show-frame-actions="Boolean(getSelectedFrame())"
         @save-svg="saveCurrentSchemaAsSvg"
         @save-png="saveCurrentSchemaAsPng"
@@ -2958,8 +3062,9 @@ onBeforeUnmount(() => {
         @new-schema="createSchema"
       />
 
-      <div class="main-grid">
+      <div class="main-grid" :class="{ 'slideshow-mode': isSlideshowMode }">
         <ToolsPanel
+          v-if="!isSlideshowMode"
           :tool-set-options="board.toolSetOptions"
           :active-tool-set="board.activeToolSet"
           :tools="board.tools"
@@ -3011,17 +3116,23 @@ onBeforeUnmount(() => {
           @frame-index-shift="shiftSelectedFrameIndex"
         />
 
-        <main class="canvas-wrap">
+        <main class="canvas-wrap" :class="{ 'slideshow-mode': isSlideshowMode }">
           <CanvasStatusBar
+            v-if="!isSlideshowMode"
             :active-schema-name="board.activeSchema ? board.activeSchema.name : 'None'"
             :is-dirty="isDirty"
             :zoom-percent="zoomPercent"
+            :viewport-x="viewportOriginX"
+            :viewport-y="viewportOriginY"
+            :can-start-slideshow="canStartSlideshow"
             @reset-zoom="resetZoomView"
+            @start-slideshow="startSlideshow"
           />
-          <div class="canvas-zone">
+          <div class="canvas-zone" :class="{ 'slideshow-mode': isSlideshowMode }">
             <canvas
               ref="canvasRef"
               class="drawing-canvas"
+              :class="{ 'slideshow-mode': isSlideshowMode }"
               :style="{ cursor: canvasCursor }"
               tabindex="0"
               @pointerdown="onPointerDown"
@@ -3035,9 +3146,14 @@ onBeforeUnmount(() => {
               @wheel.prevent="onCanvasWheel"
             ></canvas>
           </div>
+          <div v-if="isSlideshowMode" class="slideshow-nav">
+            <button class="button slideshow-nav-btn" :disabled="!canGoPreviousSlide" @click="goToPreviousSlide">&lt;</button>
+            <button class="button slideshow-nav-btn" :disabled="!canGoNextSlide" @click="goToNextSlide">&gt;</button>
+            <button class="button slideshow-nav-btn slideshow-close-btn" @click="stopSlideshow">X</button>
+          </div>
         </main>
 
-        <aside class="schema-panel">
+        <aside v-if="!isSlideshowMode" class="schema-panel">
           <SchemaSidebar
             :schemas="board.sortedSchemas"
             :active-schema-id="board.store.activeSchemaId"
