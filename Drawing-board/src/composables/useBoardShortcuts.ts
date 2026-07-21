@@ -3,6 +3,7 @@ import type { ToolId, ToolSetId } from '@/board/types'
 type UseBoardShortcutsOptions = {
   getActiveTool: () => ToolId
   getActiveToolSet: () => ToolSetId
+  setActiveToolSet: (toolSet: ToolSetId) => void
   setActiveTool: (tool: ToolId) => void
   undo: () => void
   redo: () => void
@@ -22,6 +23,21 @@ export function createBoardShortcutsHandler(options: UseBoardShortcutsOptions) {
     }
 
     const key = event.key.toLowerCase()
+    const code = event.code
+
+    if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (code === 'Digit1' || key === '&' || key === '1') {
+        event.preventDefault()
+        options.setActiveToolSet('tools')
+        return
+      }
+      if (code === 'Digit2' || key === 'é' || key === '2') {
+        event.preventDefault()
+        options.setActiveToolSet('database')
+        return
+      }
+    }
+
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey && key === 'z') {
       event.preventDefault()
       options.undo()

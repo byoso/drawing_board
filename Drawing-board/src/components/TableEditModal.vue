@@ -2,14 +2,12 @@
 const props = defineProps<{
   isOpen: boolean
   title: string
-  fields: string[]
+  fieldsText: string
 }>()
 
 const emit = defineEmits<{
   (e: 'update:title', value: string): void
-  (e: 'update:field', payload: { index: number; value: string }): void
-  (e: 'add-field'): void
-  (e: 'remove-field', index: number): void
+  (e: 'update:fields-text', value: string): void
   (e: 'save'): void
   (e: 'cancel'): void
 }>()
@@ -19,9 +17,9 @@ function onTitleInput(event: Event): void {
   emit('update:title', String(target?.value || ''))
 }
 
-function onFieldInput(index: number, event: Event): void {
-  const target = event.target as HTMLInputElement | null
-  emit('update:field', { index, value: String(target?.value || '') })
+function onFieldsTextInput(event: Event): void {
+  const target = event.target as HTMLTextAreaElement | null
+  emit('update:fields-text', String(target?.value || ''))
 }
 </script>
 
@@ -40,16 +38,15 @@ function onFieldInput(index: number, event: Event): void {
         </div>
 
         <div class="field">
-          <div class="table-fields-header">
-            <label class="label">Fields</label>
-            <button class="button mini-btn" @click="emit('add-field')">Add field</button>
-          </div>
-          <div class="table-fields-list">
-            <div v-for="(field, index) in props.fields" :key="index" class="table-field-row">
-              <input class="input" :value="field" placeholder="field" @input="onFieldInput(index, $event)" />
-              <button class="button danger-btn mini-btn" @click="emit('remove-field', index)">Remove</button>
-            </div>
-            <p v-if="props.fields.length === 0" class="table-fields-empty">No fields yet.</p>
+          <label class="label">Fields (one per line)</label>
+          <div class="control">
+            <textarea
+              class="textarea"
+              rows="8"
+              :value="props.fieldsText"
+              placeholder="id\nname\ncreated_at"
+              @input="onFieldsTextInput"
+            ></textarea>
           </div>
         </div>
       </section>

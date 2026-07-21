@@ -1,6 +1,7 @@
 export type ToolId = 'select' | 'rect' | 'ellipse' | 'arrow' | 'frame' | 'text' | 'relation' | 'table'
 export type ToolSetId = 'tools' | 'database'
 export type RelationType = 'one-to-one' | 'many-to-one' | 'one-to-many' | 'many-to-many'
+export type RectAngle = 0 | 45
 
 export interface ToolDef {
   id: ToolId
@@ -25,6 +26,8 @@ export interface BoardElement {
   tableTitle?: string
   tableFields?: string[]
   breakPoints?: Array<{ x: number; y: number }>
+  angle?: RectAngle
+  square?: boolean
   stroke?: string
   fill?: string
   strokeWidth?: number

@@ -11,9 +11,10 @@ import {
   getResizeHandles,
   hitResizeHandle,
   hitTestElement,
+  normalizeRect,
   type ResizeHandle,
 } from '@/board/canvas'
-import type { BoardElement, RelationType, ToolSetId } from '@/board/types'
+import type { BoardElement, RectAngle, RelationType, ToolSetId } from '@/board/types'
 import { useDrawingBoardStore } from '@/stores/drawingBoard'
 import { useSchemaHistory } from '@/composables/useSchemaHistory'
 import { createBoardShortcutsHandler } from '@/composables/useBoardShortcuts'
@@ -38,6 +39,8 @@ const copiedElements = ref<BoardElement[]>([])
 const isPointerInCanvas = ref(false)
 const isSpacePressed = ref(false)
 const lastCanvasPointer = ref({ x: 0, y: 0 })
+const newRectAngle = ref<RectAngle>(0)
+const newRectSquare = ref(false)
 const newArrowBreaks = ref(0)
 const newArrowOrthogonal = ref(false)
 const newRelationBreaks = ref(2)
@@ -93,12 +96,12 @@ const tableEditorState = reactive<{
   isOpen: boolean
   tableId: string | null
   title: string
-  fields: string[]
+  fieldsText: string
 }>({
   isOpen: false,
   tableId: null,
   title: 'Table',
-  fields: [],
+  fieldsText: '',
 })
 const textEditorState = reactive<{
   isOpen: boolean
@@ -572,37 +575,23 @@ function openTableEditor(table: BoardElement): void {
   tableEditorState.isOpen = true
   tableEditorState.tableId = table.id
   tableEditorState.title = String(table.tableTitle || 'Table')
-  tableEditorState.fields = Array.isArray(table.tableFields) ? table.tableFields.map((field) => String(field || '')) : []
+  const fields = Array.isArray(table.tableFields) ? table.tableFields.map((field) => String(field || '')) : []
+  tableEditorState.fieldsText = fields.join('\n')
 }
 
 function closeTableEditor(): void {
   tableEditorState.isOpen = false
   tableEditorState.tableId = null
   tableEditorState.title = 'Table'
-  tableEditorState.fields = []
+  tableEditorState.fieldsText = ''
 }
 
 function onTableEditorTitleChange(value: string): void {
   tableEditorState.title = String(value || '')
 }
 
-function onTableEditorFieldChange(payload: { index: number; value: string }): void {
-  const index = Number(payload.index)
-  if (!Number.isFinite(index) || index < 0 || index >= tableEditorState.fields.length) {
-    return
-  }
-  tableEditorState.fields[index] = String(payload.value || '')
-}
-
-function addTableEditorField(): void {
-  tableEditorState.fields.push('')
-}
-
-function removeTableEditorField(index: number): void {
-  if (index < 0 || index >= tableEditorState.fields.length) {
-    return
-  }
-  tableEditorState.fields.splice(index, 1)
+function onTableEditorFieldsTextChange(value: string): void {
+  tableEditorState.fieldsText = String(value || '')
 }
 
 function saveTableEditor(): void {
@@ -617,7 +606,10 @@ function saveTableEditor(): void {
 
   pushHistoryCheckpoint()
   table.tableTitle = String(tableEditorState.title || '').trim() || 'Table'
-  table.tableFields = tableEditorState.fields.map((field) => String(field || '').trim()).filter((field) => field.length > 0)
+  table.tableFields = tableEditorState.fieldsText
+    .split('\n')
+    .map((field) => String(field || '').trim())
+    .filter((field) => field.length > 0)
   markDirty()
   renderCanvas()
   closeTableEditor()
@@ -1013,7 +1005,7 @@ function getSelectedColor(): string | null {
   if (selected.type === 'text') {
     return String(selected.color || '') || null
   }
-  if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow' || selected.type === 'relation') {
+  if (selected.type === 'rect' || selected.type === 'ellipse' || selected.type === 'arrow' || selected.type === 'relation' || selected.type === 'table') {
     return String(selected.stroke || '') || null
   }
   return null
@@ -1038,6 +1030,32 @@ function getSelectedSize(): 'small' | 'medium' | 'big' | null {
     return null
   }
   return getSizeKeyFromElement(getSelectedElements()[0] || null)
+}
+
+function getSelectedRect(): BoardElement | null {
+  if (selectedElementIds.value.length !== 1) {
+    return null
+  }
+  const selected = getSelectedElements()[0] || null
+  if (!selected || selected.type !== 'rect') {
+    return null
+  }
+  return selected
+}
+
+function getSelectedRectAngle(): RectAngle {
+  if (board.activeTool === 'rect') {
+    return newRectAngle.value
+  }
+  const rect = getSelectedRect()
+  return rect && Number(rect.angle || 0) === 45 ? 45 : 0
+}
+
+function getSelectedRectSquare(): boolean {
+  if (board.activeTool === 'rect') {
+    return Boolean(newRectSquare.value)
+  }
+  return Boolean(getSelectedRect()?.square)
 }
 
 function isConnectorElement(element: BoardElement | null | undefined): boolean {
@@ -1100,12 +1118,12 @@ function getSelectedArrowOrthogonal(): boolean {
 }
 
 function getSelectedRelationType(): RelationType {
+  if (board.activeTool === 'relation') {
+    return newRelationType.value
+  }
   const relation = getSelectedRelation()
   if (relation) {
     return getSelectedRelationTypeFromElement(relation)
-  }
-  if (board.activeTool === 'relation') {
-    return newRelationType.value
   }
   return 'many-to-one'
 }
@@ -1239,12 +1257,15 @@ function setSelectedArrowOrthogonal(value: boolean): void {
 }
 
 function setSelectedRelationType(value: RelationType): void {
+  if (board.activeTool === 'relation' && newRelationType.value !== value) {
+    newRelationType.value = value
+  }
+
   const relation = getSelectedRelation()
   if (!relation) {
-    if (board.activeTool !== 'relation' || newRelationType.value === value) {
+    if (board.activeTool !== 'relation') {
       return
     }
-    newRelationType.value = value
     if (pointer.mode === 'draw' && draftElement.value?.type === 'relation') {
       draftElement.value.relationType = value
       renderCanvas()
@@ -1260,9 +1281,69 @@ function setSelectedRelationType(value: RelationType): void {
   renderCanvas()
 }
 
+function setSelectedRectAngle(value: RectAngle): void {
+  if (board.activeTool === 'rect' && newRectAngle.value !== value) {
+    newRectAngle.value = value
+  }
+
+  const rect = getSelectedRect()
+  if (!rect) {
+    if (board.activeTool !== 'rect') {
+      return
+    }
+    if (pointer.mode === 'draw' && draftElement.value?.type === 'rect') {
+      draftElement.value.angle = value
+      renderCanvas()
+    }
+    return
+  }
+  if ((Number(rect.angle || 0) === 45 ? 45 : 0) === value) {
+    return
+  }
+  pushHistoryCheckpoint()
+  rect.angle = value
+  markDirty()
+  renderCanvas()
+}
+
+function setSelectedRectSquare(value: boolean): void {
+  if (board.activeTool === 'rect' && newRectSquare.value !== value) {
+    newRectSquare.value = value
+  }
+
+  const rect = getSelectedRect()
+  if (!rect) {
+    if (board.activeTool !== 'rect') {
+      return
+    }
+    if (pointer.mode === 'draw' && draftElement.value?.type === 'rect') {
+      draftElement.value.square = value
+      if (value) {
+        const size = Math.max(Math.abs(Number(draftElement.value.w || 0)), Math.abs(Number(draftElement.value.h || 0)))
+        draftElement.value.w = Number(draftElement.value.w || 0) < 0 ? -size : size
+        draftElement.value.h = Number(draftElement.value.h || 0) < 0 ? -size : size
+      }
+      renderCanvas()
+    }
+    return
+  }
+  if (Boolean(rect.square) === value) {
+    return
+  }
+  pushHistoryCheckpoint()
+  rect.square = value
+  if (value) {
+    const size = Math.max(Math.abs(Number(rect.w || 0)), Math.abs(Number(rect.h || 0)))
+    rect.w = size
+    rect.h = size
+  }
+  markDirty()
+  renderCanvas()
+}
+
 function getApplicablePropertiesForSelection(): { hasColor: boolean; hasLineStyle: boolean; hasSize: boolean } {
   const elements = getSelectedElements()
-  const hasColor = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation')
+  const hasColor = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation' || element.type === 'table')
   const hasLineStyle = elements.some((element) => element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation')
   const hasSize = elements.some((element) => element.type === 'text' || element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation')
   return { hasColor, hasLineStyle, hasSize }
@@ -1282,7 +1363,7 @@ function applyColorToSelection(color: string): void {
       element.color = color
       continue
     }
-    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation') {
+    if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'arrow' || element.type === 'relation' || element.type === 'table') {
       element.stroke = color
       if (element.type === 'rect' || element.type === 'ellipse') {
         element.fill = hexToRgba(color, 0.22)
@@ -1999,6 +2080,83 @@ function applyResize(element: BoardElement, start: BoardElement, handle: ResizeH
     return
   }
 
+  if (element.type === 'rect') {
+    const startRect = normalizeRect(start)
+    const centerX = startRect.x + startRect.w / 2
+    const centerY = startRect.y + startRect.h / 2
+    const angle = Number(start.angle || 0) === 45 ? Math.PI / 4 : 0
+    const axisX = { x: Math.cos(angle), y: Math.sin(angle) }
+    const axisY = { x: -Math.sin(angle), y: Math.cos(angle) }
+    const startHalfWidth = startRect.w / 2
+    const startHalfHeight = startRect.h / 2
+    const minHalfSize = 3
+    const sx = handle.includes('e') ? 1 : handle.includes('w') ? -1 : 0
+    const sy = handle.includes('s') ? 1 : handle.includes('n') ? -1 : 0
+    const isSquare = Boolean(start.square)
+
+    const projectOnAxis = (px: number, py: number, originX: number, originY: number, axis: { x: number; y: number }): number => {
+      const dx = px - originX
+      const dy = py - originY
+      return dx * axis.x + dy * axis.y
+    }
+
+    let nextHalfWidth = startHalfWidth
+    let nextHalfHeight = startHalfHeight
+    let nextCenterX = centerX
+    let nextCenterY = centerY
+
+    if (sx !== 0 && sy !== 0) {
+      const anchorX = centerX - sx * startHalfWidth * axisX.x - sy * startHalfHeight * axisY.x
+      const anchorY = centerY - sx * startHalfWidth * axisX.y - sy * startHalfHeight * axisY.y
+      const projectedWidth = Math.max(minHalfSize, (sx * projectOnAxis(x, y, anchorX, anchorY, axisX)) / 2)
+      const projectedHeight = Math.max(minHalfSize, (sy * projectOnAxis(x, y, anchorX, anchorY, axisY)) / 2)
+      if (isSquare) {
+        const size = Math.max(projectedWidth, projectedHeight)
+        nextHalfWidth = size
+        nextHalfHeight = size
+      } else {
+        nextHalfWidth = projectedWidth
+        nextHalfHeight = projectedHeight
+      }
+      nextCenterX = anchorX + sx * nextHalfWidth * axisX.x + sy * nextHalfHeight * axisY.x
+      nextCenterY = anchorY + sx * nextHalfWidth * axisX.y + sy * nextHalfHeight * axisY.y
+    } else if (sx !== 0) {
+      const anchorX = centerX - sx * startHalfWidth * axisX.x
+      const anchorY = centerY - sx * startHalfWidth * axisX.y
+      const projectedWidth = Math.max(minHalfSize, (sx * projectOnAxis(x, y, anchorX, anchorY, axisX)) / 2)
+      if (isSquare) {
+        const size = Math.max(projectedWidth, startHalfHeight)
+        nextHalfWidth = size
+        nextHalfHeight = size
+      } else {
+        nextHalfWidth = projectedWidth
+        nextHalfHeight = startHalfHeight
+      }
+      nextCenterX = anchorX + sx * nextHalfWidth * axisX.x
+      nextCenterY = anchorY + sx * nextHalfWidth * axisX.y
+    } else if (sy !== 0) {
+      const anchorX = centerX - sy * startHalfHeight * axisY.x
+      const anchorY = centerY - sy * startHalfHeight * axisY.y
+      const projectedHeight = Math.max(minHalfSize, (sy * projectOnAxis(x, y, anchorX, anchorY, axisY)) / 2)
+      if (isSquare) {
+        const size = Math.max(projectedHeight, startHalfWidth)
+        nextHalfWidth = size
+        nextHalfHeight = size
+      } else {
+        nextHalfWidth = startHalfWidth
+        nextHalfHeight = projectedHeight
+      }
+      nextCenterX = anchorX + sy * nextHalfHeight * axisY.x
+      nextCenterY = anchorY + sy * nextHalfHeight * axisY.y
+    }
+
+    element.x = nextCenterX - nextHalfWidth
+    element.y = nextCenterY - nextHalfHeight
+    element.w = nextHalfWidth * 2
+    element.h = nextHalfHeight * 2
+    return
+  }
+
   const startBounds = getElementBounds(start, getCanvasContext())
   if (!startBounds) {
     return
@@ -2106,6 +2264,10 @@ function createDraftForTool(pos: { x: number; y: number }): BoardElement | null 
       y: pos.y,
       w: 0,
       h: 0,
+    }
+    if (board.activeTool === 'rect') {
+      draft.angle = newRectAngle.value
+      draft.square = newRectSquare.value
     }
     if (board.activeTool === 'frame') {
       draft.frameIndex = board.getNextFrameIndex()
@@ -2297,12 +2459,15 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 async function onCanvasDoubleClick(event: MouseEvent): Promise<void> {
-  if (!board.activeSchema || board.activeTool !== 'select') {
+  if (!board.activeSchema) {
     return
   }
   const pos = getPointerPosition(event)
   const hit = hitTestElement(pos.x, pos.y, board.activeSchema.elements, getCanvasContext())
   if (!hit) {
+    return
+  }
+  if (board.activeTool !== 'select' && !isSelected(hit.id)) {
     return
   }
 
@@ -2375,8 +2540,15 @@ function onPointerMove(event: PointerEvent): void {
       const breaks = Math.max(0, Math.min(8, Math.round(Number(draftElement.value.breaks || 0))))
       draftElement.value.breakPoints = getEvenlySpacedArrowBreakPoints(draftElement.value, breaks)
     } else {
-      draftElement.value.w = pos.x - pointer.startX
-      draftElement.value.h = pos.y - pointer.startY
+      let nextWidth = pos.x - pointer.startX
+      let nextHeight = pos.y - pointer.startY
+      if (draftElement.value.type === 'rect' && draftElement.value.square) {
+        const size = Math.max(Math.abs(nextWidth), Math.abs(nextHeight))
+        nextWidth = nextWidth < 0 ? -size : size
+        nextHeight = nextHeight < 0 ? -size : size
+      }
+      draftElement.value.w = nextWidth
+      draftElement.value.h = nextHeight
     }
     renderCanvas()
     return
@@ -2691,6 +2863,9 @@ function isEditableTarget(target: EventTarget | null): boolean {
 const shortcutsHandler = createBoardShortcutsHandler({
   getActiveTool: () => board.activeTool,
   getActiveToolSet: () => board.activeToolSet,
+  setActiveToolSet: (toolSet) => {
+    board.setActiveToolSet(toolSet)
+  },
   setActiveTool: (tool) => {
     board.activeTool = tool
   },
@@ -2799,9 +2974,12 @@ onBeforeUnmount(() => {
           :selected-is-frame="Boolean(getSelectedFrame())"
           :selected-is-arrow-like="Boolean(getSelectedConnector())"
           :selected-is-relation="Boolean(getSelectedRelation())"
+          :selected-is-rect="Boolean(getSelectedRect())"
           :selected-color="getSelectedColor()"
           :selected-line-style="getSelectedLineStyle()"
           :selected-size="getSelectedSize()"
+          :selected-rect-angle="getSelectedRectAngle()"
+          :selected-rect-square="getSelectedRectSquare()"
           :selected-arrow-breaks="getSelectedArrowBreaks()"
           :selected-arrow-orthogonal="getSelectedArrowOrthogonal()"
           :selected-relation-type="getSelectedRelationType()"
@@ -2823,6 +3001,8 @@ onBeforeUnmount(() => {
           @apply-color="applyColorToSelection"
           @apply-line-style="applyLineStyle"
           @apply-size="applySize"
+          @rect-angle-change="setSelectedRectAngle"
+          @rect-square-change="setSelectedRectSquare"
           @arrow-breaks-delta="shiftSelectedArrowBreaks"
           @arrow-orthogonal-change="setSelectedArrowOrthogonal"
           @relation-type-change="setSelectedRelationType"
@@ -2947,11 +3127,9 @@ onBeforeUnmount(() => {
     <TableEditModal
       :is-open="tableEditorState.isOpen"
       :title="tableEditorState.title"
-      :fields="tableEditorState.fields"
+      :fields-text="tableEditorState.fieldsText"
       @update:title="onTableEditorTitleChange"
-      @update:field="onTableEditorFieldChange"
-      @add-field="addTableEditorField"
-      @remove-field="removeTableEditorField"
+      @update:fields-text="onTableEditorFieldsTextChange"
       @save="saveTableEditor"
       @cancel="closeTableEditor"
     />

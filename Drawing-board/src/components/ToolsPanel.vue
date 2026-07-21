@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RelationType, ToolDef, ToolId, ToolSetId } from '@/board/types'
+import type { RectAngle, RelationType, ToolDef, ToolId, ToolSetId } from '@/board/types'
 
 defineProps<{
   toolSetOptions: Array<{ id: ToolSetId; label: string }>
@@ -16,9 +16,12 @@ defineProps<{
   selectedIsFrame: boolean
   selectedIsArrowLike: boolean
   selectedIsRelation: boolean
+  selectedIsRect: boolean
   selectedColor: string | null
   selectedLineStyle: 'solid' | 'dashed' | null
   selectedSize: 'small' | 'medium' | 'big' | null
+  selectedRectAngle: RectAngle
+  selectedRectSquare: boolean
   selectedArrowBreaks: number
   selectedArrowOrthogonal: boolean
   selectedRelationType: RelationType
@@ -43,6 +46,8 @@ const emit = defineEmits<{
   (e: 'apply-color', color: string): void
   (e: 'apply-line-style', style: 'solid' | 'dashed'): void
   (e: 'apply-size', size: 'small' | 'medium' | 'big'): void
+  (e: 'rect-angle-change', value: RectAngle): void
+  (e: 'rect-square-change', value: boolean): void
   (e: 'arrow-breaks-delta', delta: number): void
   (e: 'arrow-orthogonal-change', value: boolean): void
   (e: 'relation-type-change', value: RelationType): void
@@ -208,6 +213,25 @@ function onRelationTypeChange(event: Event): void {
         </div>
       </div>
 
+      <div v-if="selectedIsRect" class="options-row">
+        <p class="palette-title">Angle</p>
+        <div class="options-row">
+          <button class="option-chip" :class="{ active: selectedRectAngle === 0 }" @click="emit('rect-angle-change', 0)">0deg</button>
+          <button class="option-chip" :class="{ active: selectedRectAngle === 45 }" @click="emit('rect-angle-change', 45)">45deg</button>
+        </div>
+      </div>
+
+      <div v-if="selectedIsRect" class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedRectSquare"
+            @change="emit('rect-square-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Square
+        </label>
+      </div>
+
       <div v-if="selectedIsArrowLike" class="options-row">
         <p class="palette-title">Breaks</p>
         <div class="frame-index-row">
@@ -337,6 +361,29 @@ function onRelationTypeChange(event: Event): void {
             @change="onRelationTypeChange"
           >
           Many to many
+        </label>
+      </div>
+    </div>
+
+    <div v-if="activeTool === 'rect' && !showProperties" class="element-properties" aria-label="Rectangle properties">
+      <p class="palette-title">Rectangle</p>
+
+      <div class="options-row">
+        <p class="palette-title">Angle</p>
+        <div class="options-row">
+          <button class="option-chip" :class="{ active: selectedRectAngle === 0 }" @click="emit('rect-angle-change', 0)">0deg</button>
+          <button class="option-chip" :class="{ active: selectedRectAngle === 45 }" @click="emit('rect-angle-change', 45)">45deg</button>
+        </div>
+      </div>
+
+      <div class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedRectSquare"
+            @change="emit('rect-square-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Square
         </label>
       </div>
     </div>

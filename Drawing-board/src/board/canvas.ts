@@ -1,5 +1,5 @@
 import { FRAME_STYLE, RECT_CORNER_RADIUS } from '@/board/constants'
-import type { BoardElement, RelationType } from '@/board/types'
+import type { BoardElement, RectAngle, RelationType } from '@/board/types'
 
 export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end' | `break_${number}`
 
@@ -170,6 +170,43 @@ export function normalizeRect(el: { x?: number; y?: number; w?: number; h?: numb
   }
 }
 
+function getRectAngle(element: BoardElement): RectAngle {
+  return Number(element.angle || 0) === 45 ? 45 : 0
+}
+
+function rotatePoint(x: number, y: number, cx: number, cy: number, angleRad: number): { x: number; y: number } {
+  const dx = x - cx
+  const dy = y - cy
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+  return {
+    x: cx + dx * cos - dy * sin,
+    y: cy + dx * sin + dy * cos,
+  }
+}
+
+function getRectCorners(element: BoardElement): Array<{ x: number; y: number }> {
+  const r = normalizeRect(element)
+  const cx = r.x + r.w / 2
+  const cy = r.y + r.h / 2
+  const angle = getRectAngle(element)
+  if (angle === 0) {
+    return [
+      { x: r.x, y: r.y },
+      { x: r.x + r.w, y: r.y },
+      { x: r.x + r.w, y: r.y + r.h },
+      { x: r.x, y: r.y + r.h },
+    ]
+  }
+  const angleRad = (angle * Math.PI) / 180
+  return [
+    rotatePoint(r.x, r.y, cx, cy, angleRad),
+    rotatePoint(r.x + r.w, r.y, cx, cy, angleRad),
+    rotatePoint(r.x + r.w, r.y + r.h, cx, cy, angleRad),
+    rotatePoint(r.x, r.y + r.h, cx, cy, angleRad),
+  ]
+}
+
 export function drawRoundedRectPath(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -193,7 +230,18 @@ export function drawRoundedRectPath(
 }
 
 export function getElementBounds(element: BoardElement, ctx: CanvasRenderingContext2D | null) {
-  if (element.type === 'rect' || element.type === 'ellipse' || element.type === 'icon' || element.type === 'frame' || element.type === 'table') {
+  if (element.type === 'rect') {
+    const corners = getRectCorners(element)
+    const xs = corners.map((point) => point.x)
+    const ys = corners.map((point) => point.y)
+    return {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs),
+      h: Math.max(...ys) - Math.min(...ys),
+    }
+  }
+  if (element.type === 'ellipse' || element.type === 'icon' || element.type === 'frame' || element.type === 'table') {
     return normalizeRect(element)
   }
   if (element.type === 'arrow' || element.type === 'relation') {
@@ -261,7 +309,14 @@ export function drawElement(
 
   if (element.type === 'rect') {
     const r = normalizeRect(element)
-    drawRoundedRectPath(ctx, r.x, r.y, r.w, r.h)
+    const angle = getRectAngle(element)
+    if (angle === 45) {
+      ctx.translate(r.x + r.w / 2, r.y + r.h / 2)
+      ctx.rotate((angle * Math.PI) / 180)
+      drawRoundedRectPath(ctx, -r.w / 2, -r.h / 2, r.w, r.h)
+    } else {
+      drawRoundedRectPath(ctx, r.x, r.y, r.w, r.h)
+    }
     ctx.fill()
     ctx.stroke()
   }
@@ -634,6 +689,18 @@ export function hitTestElement(
     return !isPointInRoundedRect(px, py, innerX, innerY, innerW, innerH, innerRadius)
   }
 
+  function isPointOnRectBorder(px: number, py: number, element: BoardElement): boolean {
+    const r = normalizeRect(element)
+    const angle = getRectAngle(element)
+    if (angle === 0) {
+      return isPointOnRoundedRectBorder(px, py, r.x, r.y, r.w, r.h)
+    }
+    const cx = r.x + r.w / 2
+    const cy = r.y + r.h / 2
+    const local = rotatePoint(px, py, cx, cy, (-angle * Math.PI) / 180)
+    return isPointOnRoundedRectBorder(local.x, local.y, r.x, r.y, r.w, r.h)
+  }
+
   function isPointOnEllipseBorder(px: number, py: number, bx: number, by: number, bw: number, bh: number): boolean {
     if (bw <= 0 || bh <= 0) {
       return false
@@ -719,7 +786,7 @@ export function hitTestElement(
     }
 
     if (element.type === 'rect') {
-      if (isPointOnRoundedRectBorder(x, y, b.x, b.y, b.w, b.h)) {
+      if (isPointOnRectBorder(x, y, element)) {
         return element
       }
       continue
@@ -769,6 +836,33 @@ export function getResizeHandles(element: BoardElement, ctx: CanvasRenderingCont
 
   if (element.type === 'text') {
     return []
+  }
+
+  if (element.type === 'rect' && getRectAngle(element) === 45) {
+    const corners = getRectCorners(element)
+    const nw = corners[0]!
+    const ne = corners[1]!
+    const se = corners[2]!
+    const sw = corners[3]!
+    const midpoint = (from: { x: number; y: number }, to: { x: number; y: number }) => ({
+      x: (from.x + to.x) / 2,
+      y: (from.y + to.y) / 2,
+    })
+    const n = midpoint(nw, ne)
+    const e = midpoint(ne, se)
+    const s = midpoint(sw, se)
+    const w = midpoint(nw, sw)
+
+    return [
+      { handle: 'nw', x: nw.x, y: nw.y },
+      { handle: 'n', x: n.x, y: n.y },
+      { handle: 'ne', x: ne.x, y: ne.y },
+      { handle: 'e', x: e.x, y: e.y },
+      { handle: 'se', x: se.x, y: se.y },
+      { handle: 's', x: s.x, y: s.y },
+      { handle: 'sw', x: sw.x, y: sw.y },
+      { handle: 'w', x: w.x, y: w.y },
+    ]
   }
 
   const b = getElementBounds(element, ctx)
