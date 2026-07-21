@@ -14,4 +14,3 @@ Use it directly from this URL, or fork this repo, whatever works best for you.
 ## Just a word about the code
 
 This app is 99% AI, a shameless quick vibe-coding, do not expect the best code ever, it just works.
-This app is 99% AI, a shameless quick vibe-coding project. Do not expect the best code ever; it just works.
