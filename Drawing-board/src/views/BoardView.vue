@@ -47,10 +47,10 @@ const newArrowMagnetic = ref(true)
 const newArrowFirstSegment = ref<OrthogonalFirstSegment>('horizontal')
 const newArrowOrthogonal = ref(false)
 const newArrowLineOnly = ref(false)
-const newRelationBreaks = ref(2)
+const newRelationBreaks = ref(0)
 const newRelationMagnetic = ref(true)
 const newRelationFirstSegment = ref<OrthogonalFirstSegment>('horizontal')
-const newRelationOrthogonal = ref(true)
+const newRelationOrthogonal = ref(false)
 const newRelationType = ref<RelationType>('many-to-one')
 const iconImageCache = ref<Record<string, HTMLImageElement>>({})
 const pendingIconSetId = ref<string | null>(null)
@@ -687,14 +687,22 @@ const { onGlobalKeyDown, onGlobalKeyUp, onWindowBlur, onResize, onBeforeUnload }
 })
 
 function onToolSetChange(toolSet: ToolSetId): void {
+  if (selectedElementIds.value.length > 0) {
+    clearSelection()
+  }
   board.setActiveToolSet(toolSet)
+  renderCanvas()
 }
 
 function onSelectTool(tool: ToolId): void {
+  const previousTool = board.activeTool
   if (selectedElementIds.value.length > 0) {
     clearSelection()
   }
   board.activeTool = tool
+  if (previousTool !== tool) {
+    renderCanvas()
+  }
 }
 
 function onColorAction(color: string): void {

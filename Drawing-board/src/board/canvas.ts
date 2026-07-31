@@ -361,17 +361,22 @@ export function drawElement(
     const r = normalizeRect(element)
     const title = String(element.tableTitle || 'Table').trim() || 'Table'
     const fields = Array.isArray(element.tableFields) ? element.tableFields.map((field) => String(field || '')) : []
+    const strokeWidth = Number(element.strokeWidth || 2)
+    const fontScale = Math.max(0.9, Math.min(1.6, 1 + (strokeWidth - 2) * 0.2))
+    const titleFontSize = Math.round(14 * fontScale)
+    const fieldFontSize = Math.round(13 * fontScale)
+    const sidePadding = Math.round(10 * fontScale)
 
     ctx.save()
     ctx.fillStyle = '#ffffff'
     ctx.strokeStyle = String(element.stroke || '#1f2d54')
-    ctx.lineWidth = Number(element.strokeWidth || 2)
+    ctx.lineWidth = strokeWidth
     ctx.beginPath()
     ctx.rect(r.x, r.y, r.w, r.h)
     ctx.fill()
     ctx.stroke()
 
-    const headerHeight = Math.min(34, Math.max(24, r.h * 0.28))
+    const headerHeight = Math.min(34 * fontScale, Math.max(24 * fontScale, r.h * 0.28))
     ctx.fillStyle = '#eef4ff'
     ctx.fillRect(r.x, r.y, r.w, headerHeight)
     ctx.beginPath()
@@ -380,21 +385,27 @@ export function drawElement(
     ctx.stroke()
 
     ctx.fillStyle = '#1f2d54'
-    ctx.font = '700 14px Space Grotesk'
+    ctx.font = `700 ${titleFontSize}px Space Grotesk`
     ctx.textBaseline = 'middle'
-    ctx.fillText(title, r.x + 10, r.y + headerHeight / 2)
 
-    const rowHeight = 20
-    ctx.font = '13px Space Grotesk'
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(r.x + sidePadding, r.y, Math.max(0, r.w - sidePadding * 2), r.h)
+    ctx.clip()
+
+    ctx.fillText(title, r.x + sidePadding, r.y + headerHeight / 2)
+
+    const rowHeight = Math.max(fieldFontSize + 6, Math.round(20 * fontScale))
+    ctx.font = `${fieldFontSize}px Space Grotesk`
     fields.forEach((field, index) => {
       const y = r.y + headerHeight + rowHeight * index + rowHeight / 2
       if (y + rowHeight / 2 > r.y + r.h) {
         return
       }
       ctx.fillStyle = '#2d4169'
-      ctx.fillText(field, r.x + 10, y)
+      ctx.fillText(field, r.x + sidePadding, y)
       ctx.strokeStyle = '#dfe7f7'
-      ctx.lineWidth = 1
+      ctx.lineWidth = Math.max(1, strokeWidth * 0.5)
       const lineY = r.y + headerHeight + rowHeight * (index + 1)
       if (lineY < r.y + r.h) {
         ctx.beginPath()
@@ -403,6 +414,7 @@ export function drawElement(
         ctx.stroke()
       }
     })
+    ctx.restore()
     ctx.restore()
   }
 

@@ -44,7 +44,6 @@ function onFieldsTextInput(event: Event): void {
               class="textarea"
               rows="8"
               :value="props.fieldsText"
-              placeholder="id\nname\ncreated_at"
               @input="onFieldsTextInput"
             ></textarea>
           </div>

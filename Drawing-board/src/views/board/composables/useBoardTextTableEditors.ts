@@ -69,7 +69,6 @@ export function useBoardTextTableEditors(options: UseBoardTextTableEditorsOption
     table.tableFields = options.tableEditorState.fieldsText
       .split('\n')
       .map((field) => String(field || '').trim())
-      .filter((field) => field.length > 0)
     options.markDirty()
     options.renderCanvas()
     closeTableEditor()

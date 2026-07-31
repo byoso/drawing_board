@@ -98,6 +98,25 @@ function onRelationTypeChange(event: Event): void {
   const value = String(target?.value || 'many-to-one') as RelationType
   emit('relation-type-change', value)
 }
+
+function getToolTooltip(toolId: ToolId): string {
+  if (toolId === 'arrow' || toolId === 'relation') {
+    return 'Shift + click: add a breakpoint\nCtrl + click: remove a breakpoint'
+  }
+  if (toolId === 'table') {
+    return 'Double-click: edit table content'
+  }
+  if (toolId === 'text') {
+    return 'Double-click: edit text'
+  }
+  if (toolId === 'frame') {
+    return 'Double-click: rename frame'
+  }
+  if (toolId === 'select') {
+    return 'Double-click text/table/frame: edit content'
+  }
+  return ''
+}
 </script>
 
 <template>
@@ -111,6 +130,7 @@ function onRelationTypeChange(event: Event): void {
       :key="tool.id"
       class="tool-btn"
       :class="{ active: activeTool === tool.id }"
+      :title="getToolTooltip(tool.id)"
       @click="emit('select-tool', tool.id)"
     >
       <span>{{ tool.shortcut }}</span>
