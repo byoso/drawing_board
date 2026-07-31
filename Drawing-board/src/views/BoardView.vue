@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { WORLD_HEIGHT, WORLD_WIDTH } from '@/board/constants'
-import type { BoardElement, RectAngle, RelationType, ToolSetId } from '@/board/types'
+import type { BoardElement, OrthogonalFirstSegment, RectAngle, RelationType, ToolId, ToolSetId } from '@/board/types'
 import { useDrawingBoardStore } from '@/stores/drawingBoard'
 import { useSchemaHistory } from '@/composables/useSchemaHistory'
 import { createBoardShortcutsHandler } from '@/composables/useBoardShortcuts'
@@ -41,10 +41,15 @@ const isSpacePressed = ref(false)
 const lastCanvasPointer = ref({ x: 0, y: 0 })
 const newRectAngle = ref<RectAngle>(0)
 const newRectSquare = ref(false)
+const newShapeFilled = ref(true)
 const newArrowBreaks = ref(0)
+const newArrowMagnetic = ref(true)
+const newArrowFirstSegment = ref<OrthogonalFirstSegment>('horizontal')
 const newArrowOrthogonal = ref(false)
 const newArrowLineOnly = ref(false)
 const newRelationBreaks = ref(2)
+const newRelationMagnetic = ref(true)
+const newRelationFirstSegment = ref<OrthogonalFirstSegment>('horizontal')
 const newRelationOrthogonal = ref(true)
 const newRelationType = ref<RelationType>('many-to-one')
 const iconImageCache = ref<Record<string, HTMLImageElement>>({})
@@ -129,6 +134,8 @@ const pointer = reactive<BoardPointerState>({
   mode: 'idle',
   startX: 0,
   startY: 0,
+  dragAppliedDx: 0,
+  dragAppliedDy: 0,
   panStartCanvasX: 0,
   panStartCanvasY: 0,
   panStartOffsetX: 0,
@@ -292,23 +299,30 @@ const {
   getSelectedLineStyle,
   getSelectedSize,
   getSelectedRect,
+  getSelectedEllipse,
   getSelectedRectAngle,
   getSelectedRectSquare,
+  getSelectedFilled,
   getSelectedConnector,
   getSelectedArrow,
   getSelectedRelation,
   getSelectedArrowBreaks,
   getSelectedArrowOrthogonal,
+  getSelectedArrowFirstSegment,
+  getSelectedArrowMagnetic,
   getSelectedArrowLineOnly,
   getSelectedRelationType,
   getSelectedRelationTypeFromElement,
   getEvenlySpacedArrowBreakPoints,
   shiftSelectedArrowBreaks,
   setSelectedArrowOrthogonal,
+  flipSelectedArrowOrthogonalOrientation,
+  setSelectedArrowMagnetic,
   setSelectedArrowLineOnly,
   setSelectedRelationType,
   setSelectedRectAngle,
   setSelectedRectSquare,
+  setSelectedFilled,
   getApplicablePropertiesForSelection,
   applyColorToSelection,
   applyLineStyle,
@@ -322,10 +336,15 @@ const {
   getSizePresets: () => board.sizePresets,
   newRectAngle,
   newRectSquare,
+  newShapeFilled,
   newArrowBreaks,
+  newArrowMagnetic,
+  newArrowFirstSegment,
   newArrowOrthogonal,
   newArrowLineOnly,
   newRelationBreaks,
+  newRelationMagnetic,
+  newRelationFirstSegment,
   newRelationOrthogonal,
   newRelationType,
   pushHistoryCheckpoint,
@@ -517,10 +536,15 @@ const { onPointerDown, onPointerMove, onPointerUp } = useBoardPointerInteraction
   isSlideshowMode,
   newRectAngle,
   newRectSquare,
+  newShapeFilled,
   newArrowBreaks,
+  newArrowMagnetic,
+  newArrowFirstSegment,
   newArrowOrthogonal,
   newArrowLineOnly,
   newRelationBreaks,
+  newRelationMagnetic,
+  newRelationFirstSegment,
   newRelationOrthogonal,
   newRelationType,
   viewport,
@@ -633,7 +657,7 @@ const shortcutsHandler = createBoardShortcutsHandler({
     board.setActiveToolSet(toolSet)
   },
   setActiveTool: (tool) => {
-    board.activeTool = tool
+    onSelectTool(tool)
   },
   undo,
   redo,
@@ -664,6 +688,13 @@ const { onGlobalKeyDown, onGlobalKeyUp, onWindowBlur, onResize, onBeforeUnload }
 
 function onToolSetChange(toolSet: ToolSetId): void {
   board.setActiveToolSet(toolSet)
+}
+
+function onSelectTool(tool: ToolId): void {
+  if (selectedElementIds.value.length > 0) {
+    clearSelection()
+  }
+  board.activeTool = tool
 }
 
 function onColorAction(color: string): void {
@@ -742,6 +773,8 @@ onBeforeUnmount(() => {
           :selected-is-arrow-like="Boolean(getSelectedConnector())"
           :selected-is-relation="Boolean(getSelectedRelation())"
           :selected-is-rect="Boolean(getSelectedRect())"
+          :selected-is-ellipse="Boolean(getSelectedEllipse())"
+          :selected-filled="getSelectedFilled()"
           :selected-color="getSelectedColor()"
           :selected-line-style="getSelectedLineStyle()"
           :selected-size="getSelectedSize()"
@@ -749,6 +782,8 @@ onBeforeUnmount(() => {
           :selected-rect-square="getSelectedRectSquare()"
           :selected-arrow-breaks="getSelectedArrowBreaks()"
           :selected-arrow-orthogonal="getSelectedArrowOrthogonal()"
+          :selected-arrow-first-segment="getSelectedArrowFirstSegment()"
+          :selected-arrow-magnetic="getSelectedArrowMagnetic()"
           :selected-arrow-line-only="getSelectedArrowLineOnly()"
           :selected-relation-type="getSelectedRelationType()"
           :can-increment-arrow-breaks="getSelectedArrowBreaks() < 8"
@@ -762,7 +797,7 @@ onBeforeUnmount(() => {
           :can-shift-frame-index-down="canShiftSelectedFrameIndex(-1)"
           :can-shift-frame-index-up="canShiftSelectedFrameIndex(1)"
           @select-tool-set="onToolSetChange"
-          @select-tool="board.activeTool = $event"
+          @select-tool="onSelectTool"
           @set-active-color="onColorAction"
           @set-line-style="onLineStyleAction"
           @set-draw-size="onDrawSizeAction"
@@ -771,8 +806,11 @@ onBeforeUnmount(() => {
           @apply-size="applySize"
           @rect-angle-change="setSelectedRectAngle"
           @rect-square-change="setSelectedRectSquare"
+          @filled-change="setSelectedFilled"
           @arrow-breaks-delta="shiftSelectedArrowBreaks"
           @arrow-orthogonal-change="setSelectedArrowOrthogonal"
+          @arrow-orthogonal-flip="flipSelectedArrowOrthogonalOrientation"
+          @arrow-magnetic-change="setSelectedArrowMagnetic"
           @arrow-line-only-change="setSelectedArrowLineOnly"
           @relation-type-change="setSelectedRelationType"
           @frame-name-change="onSelectedFrameNameChange"

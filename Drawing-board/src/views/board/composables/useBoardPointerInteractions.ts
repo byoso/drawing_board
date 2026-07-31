@@ -1,13 +1,23 @@
 import type { Ref } from 'vue'
 import { WORLD_HEIGHT, WORLD_WIDTH } from '@/board/constants'
-import { getArrowPathPoints, getElementBounds, hitResizeHandle, hitTestElement, normalizeRect } from '@/board/canvas'
-import type { BoardElement, RectAngle, RelationType } from '@/board/types'
+import { getArrowPathPoints, getElementBounds, getResizeHandles, hitResizeHandle, hitTestElement, normalizeRect } from '@/board/canvas'
+import {
+  clearConnectorAttachments,
+  getConnectorMagnetic,
+  isMagneticConnector,
+  syncConnectorWithMovedContainers,
+  updateConnectorAttachments,
+  updateConnectorEndpointAttachment,
+} from '@/board/magnetic'
+import type { BoardElement, OrthogonalFirstSegment, RectAngle, RelationType } from '@/board/types'
 import { deepClone, hexToRgba, uid } from '@/board/utils'
 
 export type BoardPointerState = {
   mode: 'idle' | 'draw' | 'drag' | 'resize' | 'pan'
   startX: number
   startY: number
+  dragAppliedDx: number
+  dragAppliedDy: number
   panStartCanvasX: number
   panStartCanvasY: number
   panStartOffsetX: number
@@ -29,10 +39,15 @@ type UseBoardPointerInteractionsArgs = {
   isSlideshowMode: { readonly value: boolean }
   newRectAngle: Ref<RectAngle>
   newRectSquare: Ref<boolean>
+  newShapeFilled: Ref<boolean>
   newArrowBreaks: Ref<number>
+  newArrowMagnetic: Ref<boolean>
+  newArrowFirstSegment: Ref<OrthogonalFirstSegment>
   newArrowOrthogonal: Ref<boolean>
   newArrowLineOnly: Ref<boolean>
   newRelationBreaks: Ref<number>
+  newRelationMagnetic: Ref<boolean>
+  newRelationFirstSegment: Ref<OrthogonalFirstSegment>
   newRelationOrthogonal: Ref<boolean>
   newRelationType: Ref<RelationType>
   viewport: { zoom: number; offsetX: number; offsetY: number }
@@ -70,10 +85,15 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
     isSlideshowMode,
     newRectAngle,
     newRectSquare,
+    newShapeFilled,
     newArrowBreaks,
+    newArrowMagnetic,
+    newArrowFirstSegment,
     newArrowOrthogonal,
     newArrowLineOnly,
     newRelationBreaks,
+    newRelationMagnetic,
+    newRelationFirstSegment,
     newRelationOrthogonal,
     newRelationType,
     viewport,
@@ -109,10 +129,198 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
     return schema.elements.find((element) => element.id === selectedElementIds.value[0]) || null
   }
 
+  function findSelectedConnector(): BoardElement | null {
+    const selected = findSelectedElement()
+    if (!selected || (selected.type !== 'arrow' && selected.type !== 'relation')) {
+      return null
+    }
+    return selected
+  }
+
+  function getNormalizedBreakPoints(element: BoardElement, breakCount: number): Array<{ x: number; y: number }> {
+    const points: Array<{ x: number; y: number }> = []
+    const source = Array.isArray(element.breakPoints) ? element.breakPoints : []
+    const startX = Number(element.x1 || 0)
+    const startY = Number(element.y1 || 0)
+    const endX = Number(element.x2 || 0)
+    const endY = Number(element.y2 || 0)
+
+    for (let i = 0; i < breakCount; i += 1) {
+      const raw = source[i]
+      if (raw && typeof raw === 'object') {
+        points.push({
+          x: Number(raw.x || 0),
+          y: Number(raw.y || 0),
+        })
+        continue
+      }
+      const t = (i + 1) / (breakCount + 1)
+      points.push({
+        x: startX + (endX - startX) * t,
+        y: startY + (endY - startY) * t,
+      })
+    }
+
+    return points
+  }
+
+  function getClosestPointOnSegment(
+    px: number,
+    py: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+  ): { x: number; y: number; distance: number } {
+    const dx = x2 - x1
+    const dy = y2 - y1
+    const lenSq = dx * dx + dy * dy
+    if (lenSq === 0) {
+      return {
+        x: x1,
+        y: y1,
+        distance: Math.hypot(px - x1, py - y1),
+      }
+    }
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq))
+    const x = x1 + t * dx
+    const y = y1 + t * dy
+    return {
+      x,
+      y,
+      distance: Math.hypot(px - x, py - y),
+    }
+  }
+
+  function getBreakpointInsertion(
+    connector: BoardElement,
+    x: number,
+    y: number,
+  ): { breakPoints: Array<{ x: number; y: number }>; breaks: number } | null {
+    const currentBreaks = Math.max(0, Math.min(8, Math.round(Number(connector.breaks || 0))))
+    if (currentBreaks >= 8) {
+      return null
+    }
+
+    const points = getArrowPathPoints(connector)
+    if (points.length < 2) {
+      return null
+    }
+
+    let bestSegmentIndex = -1
+    let bestPoint: { x: number; y: number } | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const from = points[i]!
+      const to = points[i + 1]!
+      const projected = getClosestPointOnSegment(x, y, from.x, from.y, to.x, to.y)
+      if (projected.distance < bestDistance) {
+        bestDistance = projected.distance
+        bestSegmentIndex = i
+        bestPoint = { x: projected.x, y: projected.y }
+      }
+    }
+
+    if (bestSegmentIndex < 0 || !bestPoint || bestDistance > 12) {
+      return null
+    }
+
+    const normalized = getNormalizedBreakPoints(connector, currentBreaks)
+    const insertIndex = Math.max(0, Math.min(normalized.length, bestSegmentIndex))
+    normalized.splice(insertIndex, 0, bestPoint)
+    return {
+      breakPoints: normalized,
+      breaks: currentBreaks + 1,
+    }
+  }
+
+  function getBreakpointRemoval(
+    connector: BoardElement,
+    x: number,
+    y: number,
+  ): { breakPoints: Array<{ x: number; y: number }>; breaks: number } | null {
+    const currentBreaks = Math.max(0, Math.min(8, Math.round(Number(connector.breaks || 0))))
+    if (currentBreaks <= 0) {
+      return null
+    }
+
+    const ctx = getCanvasContext()
+    const breakHandles = getResizeHandles(connector, ctx).filter((handle) => String(handle.handle).startsWith('break_'))
+    if (breakHandles.length === 0) {
+      return null
+    }
+
+    const MAX_BREAKPOINT_REMOVE_DISTANCE = 10
+    let closestHandle: { handle: string; distance: number } | null = null
+    for (const handle of breakHandles) {
+      const distance = Math.hypot(x - handle.x, y - handle.y)
+      if (distance > MAX_BREAKPOINT_REMOVE_DISTANCE) {
+        continue
+      }
+      if (!closestHandle || distance < closestHandle.distance) {
+        closestHandle = { handle: String(handle.handle), distance }
+      }
+    }
+
+    if (!closestHandle) {
+      return null
+    }
+
+    const index = Number.parseInt(String(closestHandle.handle).replace('break_', ''), 10)
+    if (!Number.isFinite(index) || index < 0 || index >= currentBreaks) {
+      return null
+    }
+
+    const normalized = getNormalizedBreakPoints(connector, currentBreaks)
+    normalized.splice(index, 1)
+    return {
+      breakPoints: normalized,
+      breaks: Math.max(0, currentBreaks - 1),
+    }
+  }
+
+  function handleBreakpointModifierClick(event: PointerEvent, pos: { x: number; y: number }): boolean {
+    const connector = findSelectedConnector()
+    if (!connector) {
+      return false
+    }
+
+    if (event.shiftKey) {
+      const insertion = getBreakpointInsertion(connector, pos.x, pos.y)
+      if (!insertion) {
+        return false
+      }
+      pushHistoryCheckpoint()
+      connector.breakPoints = insertion.breakPoints
+      connector.breaks = insertion.breaks
+      markDirty()
+      renderCanvas()
+      return true
+    }
+
+    const wantsBreakpointRemoval = event.ctrlKey && !event.metaKey
+
+    if (wantsBreakpointRemoval) {
+      const removal = getBreakpointRemoval(connector, pos.x, pos.y)
+      if (!removal) {
+        return false
+      }
+      pushHistoryCheckpoint()
+      connector.breakPoints = removal.breakPoints
+      connector.breaks = removal.breaks
+      markDirty()
+      renderCanvas()
+      return true
+    }
+
+    return false
+  }
+
   function applyResize(element: BoardElement, start: BoardElement, handle: string, x: number, y: number): void {
     if (element.type === 'arrow' || element.type === 'relation') {
       const currentBreaks = Math.max(0, Math.min(8, Math.round(Number(element.breaks || 0))))
-      let currentBreakPoints = getEvenlySpacedArrowBreakPoints(start, currentBreaks)
+      let currentBreakPoints = getNormalizedBreakPoints(start, currentBreaks)
       if (handle === 'start') {
         element.x1 = x
         element.y1 = y
@@ -294,6 +502,10 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
     element.h = Math.abs(bottom - top)
   }
 
+  function isMagneticContainerElement(element: BoardElement | null | undefined): boolean {
+    return Boolean(element && (element.type === 'rect' || element.type === 'ellipse' || element.type === 'table'))
+  }
+
   function isBoundsInsideMarquee(
     bounds: { x: number; y: number; w: number; h: number } | null,
     marquee: { x: number; y: number; w: number; h: number } | null,
@@ -364,6 +576,9 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
         draft.angle = newRectAngle.value
         draft.square = newRectSquare.value
       }
+      if (elementType === 'rect' || elementType === 'ellipse') {
+        draft.filled = Boolean(newShapeFilled.value)
+      }
       if (elementType === 'frame') {
         draft.frameIndex = getNextFrameIndex()
         draft.name = getDefaultFrameName(Number(draft.frameIndex))
@@ -382,11 +597,13 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
       const draft: BoardElement = {
         ...base,
         type: 'arrow',
+        magnetic: Boolean(newArrowMagnetic.value),
         x1: pos.x,
         y1: pos.y,
         x2: pos.x,
         y2: pos.y,
         breaks,
+        orthogonalFirstSegment: newArrowFirstSegment.value,
         orthogonal: Boolean(newArrowOrthogonal.value),
         lineOnly: Boolean(newArrowLineOnly.value),
         breakPoints: [],
@@ -400,11 +617,13 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
       const draft: BoardElement = {
         ...base,
         type: 'relation',
+        magnetic: Boolean(newRelationMagnetic.value),
         x1: pos.x,
         y1: pos.y,
         x2: pos.x,
         y2: pos.y,
         breaks,
+        orthogonalFirstSegment: newRelationFirstSegment.value,
         orthogonal: Boolean(newRelationOrthogonal.value),
         relationType: newRelationType.value,
         breakPoints: [],
@@ -441,6 +660,17 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
 
     const pos = getPointerPosition(event)
     lastCanvasPointer.value = pos
+
+    if (handleBreakpointModifierClick(event, pos)) {
+      event.preventDefault()
+      pointer.mode = 'idle'
+      pointer.startElements = {}
+      pointer.startElement = null
+      pointer.resizeHandle = null
+      pointer.historyCaptured = false
+      return
+    }
+
     pointer.startX = pos.x
     pointer.startY = pos.y
     pointer.historyCaptured = false
@@ -581,6 +811,11 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
       if (draftElement.value.type === 'arrow' || draftElement.value.type === 'relation') {
         draftElement.value.x2 = pos.x
         draftElement.value.y2 = pos.y
+        if (draftElement.value.orthogonal && !draftElement.value.orthogonalFirstSegment) {
+          const dx = Math.abs(Number(draftElement.value.x2 || 0) - Number(draftElement.value.x1 || 0))
+          const dy = Math.abs(Number(draftElement.value.y2 || 0) - Number(draftElement.value.y1 || 0))
+          draftElement.value.orthogonalFirstSegment = dx >= dy ? 'horizontal' : 'vertical'
+        }
         const breaks = Math.max(0, Math.min(8, Math.round(Number(draftElement.value.breaks || 0))))
         draftElement.value.breakPoints = getEvenlySpacedArrowBreakPoints(draftElement.value, breaks)
       } else {
@@ -616,6 +851,8 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
       }
       const dx = pos.x - pointer.startX
       const dy = pos.y - pointer.startY
+      const stepDx = dx - Number(pointer.dragAppliedDx || 0)
+      const stepDy = dy - Number(pointer.dragAppliedDy || 0)
       for (const elementId of selectedElementIds.value) {
         const target = schema.elements.find((element) => element.id === elementId)
         const start = pointer.startElements[elementId]
@@ -633,11 +870,36 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
               y: Number(point?.y || 0) + dy,
             }))
           }
+          if (getConnectorMagnetic(target)) {
+            clearConnectorAttachments(target)
+          }
         } else {
           target.x = Number(start.x || 0) + dx
           target.y = Number(start.y || 0) + dy
         }
       }
+
+      const movedContainerIds = new Set<string>()
+      for (const elementId of selectedElementIds.value) {
+        const start = pointer.startElements[elementId]
+        if (isMagneticContainerElement(start)) {
+          movedContainerIds.add(elementId)
+        }
+      }
+
+      if (movedContainerIds.size > 0) {
+        const selectedIdSet = new Set(selectedElementIds.value)
+        for (const element of schema.elements) {
+          if (!isMagneticConnector(element) || selectedIdSet.has(element.id)) {
+            continue
+          }
+          syncConnectorWithMovedContainers(element, movedContainerIds, stepDx, stepDy)
+        }
+      }
+
+      pointer.dragAppliedDx = dx
+      pointer.dragAppliedDy = dy
+
       markDirty()
       renderCanvas()
       return
@@ -653,6 +915,15 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
         pointer.historyCaptured = true
       }
       applyResize(selected, pointer.startElement, pointer.resizeHandle, pos.x, pos.y)
+
+      if (isMagneticConnector(selected) && getConnectorMagnetic(selected)) {
+        if (pointer.resizeHandle === 'start') {
+          updateConnectorEndpointAttachment(selected, 'start', schema.elements)
+        } else if (pointer.resizeHandle === 'end') {
+          updateConnectorEndpointAttachment(selected, 'end', schema.elements)
+        }
+      }
+
       markDirty()
       renderCanvas()
     }
@@ -677,6 +948,13 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
         shouldAdd = w > 6 && h > 6
       }
       if (shouldAdd) {
+        if (isMagneticConnector(draftElement.value)) {
+          if (getConnectorMagnetic(draftElement.value)) {
+            updateConnectorAttachments(draftElement.value, schema.elements)
+          } else {
+            clearConnectorAttachments(draftElement.value)
+          }
+        }
         pushHistoryCheckpoint()
         schema.elements.push(draftElement.value)
         setSingleSelection(draftElement.value.id)
@@ -689,6 +967,8 @@ export function useBoardPointerInteractions(args: UseBoardPointerInteractionsArg
     pointer.startElements = {}
     pointer.startElement = null
     pointer.resizeHandle = null
+    pointer.dragAppliedDx = 0
+    pointer.dragAppliedDy = 0
     pointer.panStartCanvasX = 0
     pointer.panStartCanvasY = 0
     pointer.panStartOffsetX = 0

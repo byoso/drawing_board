@@ -1,5 +1,5 @@
 import { FRAME_STYLE, RECT_CORNER_RADIUS } from '@/board/constants'
-import type { BoardElement, RectAngle, RelationType } from '@/board/types'
+import type { BoardElement, OrthogonalFirstSegment, RectAngle, RelationType } from '@/board/types'
 
 export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end' | `break_${number}`
 
@@ -127,11 +127,14 @@ export function getArrowPathPoints(element: BoardElement): ArrowPoint[] {
     return [start, ...breaks, end]
   }
 
+  const firstSegmentOrientation = element.orthogonalFirstSegment as OrthogonalFirstSegment | undefined
+
   // Orthogonal with no user-defined breaks: generate a single implicit elbow (L-shape).
   if (breaks.length === 0) {
-    const dx = Math.abs(end.x - start.x)
-    const dy = Math.abs(end.y - start.y)
-    const elbow = dx >= dy
+    const isHorizontalFirst = firstSegmentOrientation
+      ? firstSegmentOrientation === 'horizontal'
+      : Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)
+    const elbow = isHorizontalFirst
       ? { x: end.x, y: start.y }   // horizontal first, then vertical
       : { x: start.x, y: end.y }   // vertical first, then horizontal
     return [start, elbow, end]
@@ -139,7 +142,9 @@ export function getArrowPathPoints(element: BoardElement): ArrowPoint[] {
 
   const orthogonalBreaks: ArrowPoint[] = []
   // Anchor initial orientation to the first user break so orientation can flip naturally near endpoints.
-  let horizontalSegment = Math.abs(breaks[0]!.x - start.x) >= Math.abs(breaks[0]!.y - start.y)
+  let horizontalSegment = firstSegmentOrientation
+    ? firstSegmentOrientation === 'horizontal'
+    : Math.abs(breaks[0]!.x - start.x) >= Math.abs(breaks[0]!.y - start.y)
 
   for (let i = 0; i < breaks.length; i += 1) {
     const previous = i === 0 ? start : orthogonalBreaks[i - 1]!
@@ -158,13 +163,12 @@ export function getArrowPathPoints(element: BoardElement): ArrowPoint[] {
 
     const candidateVerticalToEnd: ArrowPoint = { x: end.x, y: previous.y }
     const candidateHorizontalToEnd: ArrowPoint = { x: previous.x, y: end.y }
-    const distToVertical = Math.hypot(raw.x - candidateVerticalToEnd.x, raw.y - candidateVerticalToEnd.y)
-    const distToHorizontal = Math.hypot(raw.x - candidateHorizontalToEnd.x, raw.y - candidateHorizontalToEnd.y)
-
-    if (distToVertical === distToHorizontal) {
-      orthogonalBreaks.push(horizontalSegment ? candidateVerticalToEnd : candidateHorizontalToEnd)
+    // Keep the first-segment lock deterministic all the way to the last bend.
+    // The previous nearest-candidate heuristic could silently flip orientation.
+    if (horizontalSegment) {
+      orthogonalBreaks.push(candidateVerticalToEnd)
     } else {
-      orthogonalBreaks.push(distToVertical <= distToHorizontal ? candidateVerticalToEnd : candidateHorizontalToEnd)
+      orthogonalBreaks.push(candidateHorizontalToEnd)
     }
   }
 
@@ -329,12 +333,16 @@ export function drawElement(
       ctx.translate(r.x + r.w / 2, r.y + r.h / 2)
       ctx.rotate((angle * Math.PI) / 180)
       drawRoundedRectPath(ctx, -r.w / 2, -r.h / 2, r.w, r.h)
-      ctx.fill()
+      if (element.filled !== false) {
+        ctx.fill()
+      }
       ctx.stroke()
       ctx.restore()
     } else {
       drawRoundedRectPath(ctx, r.x, r.y, r.w, r.h)
-      ctx.fill()
+      if (element.filled !== false) {
+        ctx.fill()
+      }
       ctx.stroke()
     }
   }
@@ -343,7 +351,9 @@ export function drawElement(
     const r = normalizeRect(element)
     ctx.beginPath()
     ctx.ellipse(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, r.h / 2, 0, 0, Math.PI * 2)
-    ctx.fill()
+    if (element.filled !== false) {
+      ctx.fill()
+    }
     ctx.stroke()
   }
 

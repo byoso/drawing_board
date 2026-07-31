@@ -1,6 +1,22 @@
 import { SCHEMA_VERSION, STORE_KEY } from '@/board/constants'
-import type { BoardStoreData, IconSet, Schema } from '@/board/types'
+import type { BoardElement, BoardStoreData, IconSet, Schema } from '@/board/types'
 import { uid } from '@/board/utils'
+
+function normalizeElement(element: BoardElement): BoardElement {
+  if ((element.type === 'arrow' || element.type === 'relation') && element.magnetic === undefined) {
+    return {
+      ...element,
+      magnetic: false,
+    }
+  }
+  if ((element.type === 'rect' || element.type === 'ellipse') && element.filled === undefined) {
+    return {
+      ...element,
+      filled: true,
+    }
+  }
+  return element
+}
 
 function normalizeIconSet(iconSet: Partial<IconSet>): IconSet {
   return {
@@ -36,12 +52,15 @@ function ensureFrameIndexes(schema: Schema): Schema {
 
 function normalizeSchema(schema: Partial<Schema>, index: number): Schema {
   const now = Date.now()
+  const normalizedElements = Array.isArray(schema.elements)
+    ? schema.elements.map((element) => normalizeElement(element as BoardElement))
+    : []
   return ensureFrameIndexes({
     id: schema.id || uid('schema'),
     name: schema.name || `Diagram ${index + 1}`,
     createdAt: typeof schema.createdAt === 'number' ? schema.createdAt : now,
     updatedAt: typeof schema.updatedAt === 'number' ? schema.updatedAt : now,
-    elements: Array.isArray(schema.elements) ? schema.elements : [],
+    elements: normalizedElements,
   })
 }
 

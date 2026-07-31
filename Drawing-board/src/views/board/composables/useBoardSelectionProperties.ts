@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import { getArrowPathPoints } from '@/board/canvas'
-import type { BoardElement, RectAngle, RelationType, ToolId } from '@/board/types'
+import { clearConnectorAttachments, getConnectorMagnetic, isMagneticConnector, updateConnectorAttachments } from '@/board/magnetic'
+import type { BoardElement, OrthogonalFirstSegment, RectAngle, RelationType, ToolId } from '@/board/types'
 import { hexToRgba } from '@/board/utils'
 
 type PointerMode = 'idle' | 'draw' | 'drag' | 'resize' | 'pan'
@@ -20,10 +21,15 @@ type UseBoardSelectionPropertiesOptions = {
   getSizePresets: () => SizePresetMap
   newRectAngle: Ref<RectAngle>
   newRectSquare: Ref<boolean>
+  newShapeFilled: Ref<boolean>
   newArrowBreaks: Ref<number>
+  newArrowMagnetic: Ref<boolean>
+  newArrowFirstSegment: Ref<OrthogonalFirstSegment>
   newArrowOrthogonal: Ref<boolean>
   newArrowLineOnly: Ref<boolean>
   newRelationBreaks: Ref<number>
+  newRelationMagnetic: Ref<boolean>
+  newRelationFirstSegment: Ref<OrthogonalFirstSegment>
   newRelationOrthogonal: Ref<boolean>
   newRelationType: Ref<RelationType>
   pushHistoryCheckpoint: () => void
@@ -137,6 +143,17 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
     return selected
   }
 
+  function getSelectedEllipse(): BoardElement | null {
+    if (options.selectedElementIds.value.length !== 1) {
+      return null
+    }
+    const selected = getSelectedElements()[0] || null
+    if (!selected || selected.type !== 'ellipse') {
+      return null
+    }
+    return selected
+  }
+
   function getSelectedRectAngle(): RectAngle {
     if (options.getActiveTool() === 'rect') {
       return options.newRectAngle.value
@@ -150,6 +167,21 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
       return Boolean(options.newRectSquare.value)
     }
     return Boolean(getSelectedRect()?.square)
+  }
+
+  function getSelectedFilled(): boolean {
+    if (options.getActiveTool() === 'rect' || options.getActiveTool() === 'ellipse') {
+      return Boolean(options.newShapeFilled.value)
+    }
+    const rect = getSelectedRect()
+    if (rect) {
+      return rect.filled !== false
+    }
+    const ellipse = getSelectedEllipse()
+    if (ellipse) {
+      return ellipse.filled !== false
+    }
+    return true
   }
 
   function getSelectedConnector(): BoardElement | null {
@@ -203,6 +235,45 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
     }
     if (options.getActiveTool() === 'relation') {
       return Boolean(options.newRelationOrthogonal.value)
+    }
+    return false
+  }
+
+  function inferOrthogonalFirstSegment(element: BoardElement): OrthogonalFirstSegment {
+    const source = Array.isArray(element.breakPoints) && element.breakPoints.length > 0
+      ? element.breakPoints[0]
+      : { x: Number(element.x2 || 0), y: Number(element.y2 || 0) }
+    const startX = Number(element.x1 || 0)
+    const startY = Number(element.y1 || 0)
+    const dx = Math.abs(Number(source?.x || 0) - startX)
+    const dy = Math.abs(Number(source?.y || 0) - startY)
+    return dx >= dy ? 'horizontal' : 'vertical'
+  }
+
+  function getSelectedArrowFirstSegment(): OrthogonalFirstSegment {
+    const connector = getSelectedConnector()
+    if (connector) {
+      return (connector.orthogonalFirstSegment as OrthogonalFirstSegment | undefined) || inferOrthogonalFirstSegment(connector)
+    }
+    if (options.getActiveTool() === 'arrow') {
+      return options.newArrowFirstSegment.value
+    }
+    if (options.getActiveTool() === 'relation') {
+      return options.newRelationFirstSegment.value
+    }
+    return 'horizontal'
+  }
+
+  function getSelectedArrowMagnetic(): boolean {
+    const connector = getSelectedConnector()
+    if (connector) {
+      return getConnectorMagnetic(connector)
+    }
+    if (options.getActiveTool() === 'arrow') {
+      return Boolean(options.newArrowMagnetic.value)
+    }
+    if (options.getActiveTool() === 'relation') {
+      return Boolean(options.newRelationMagnetic.value)
     }
     return false
   }
@@ -369,6 +440,9 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
       }
       if (options.getPointerMode() === 'draw' && options.draftElement.value && isConnectorElement(options.draftElement.value)) {
         options.draftElement.value.orthogonal = value
+        if (value && !options.draftElement.value.orthogonalFirstSegment) {
+          options.draftElement.value.orthogonalFirstSegment = inferOrthogonalFirstSegment(options.draftElement.value)
+        }
         options.renderCanvas()
       }
       return
@@ -378,6 +452,81 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
     }
     options.pushHistoryCheckpoint()
     connector.orthogonal = value
+    if (value && !connector.orthogonalFirstSegment) {
+      connector.orthogonalFirstSegment = inferOrthogonalFirstSegment(connector)
+    }
+    options.markDirty()
+    options.renderCanvas()
+  }
+
+  function flipSelectedArrowOrthogonalOrientation(): void {
+    const next = getSelectedArrowFirstSegment() === 'horizontal' ? 'vertical' : 'horizontal'
+
+    if (options.getActiveTool() === 'arrow') {
+      options.newArrowFirstSegment.value = next
+    }
+    if (options.getActiveTool() === 'relation') {
+      options.newRelationFirstSegment.value = next
+    }
+
+    const connector = getSelectedConnector()
+    if (!connector) {
+      if (
+        (options.getActiveTool() === 'arrow' || options.getActiveTool() === 'relation')
+        && options.getPointerMode() === 'draw'
+        && options.draftElement.value
+        && isConnectorElement(options.draftElement.value)
+      ) {
+        options.draftElement.value.orthogonalFirstSegment = next
+        options.renderCanvas()
+      }
+      return
+    }
+
+    options.pushHistoryCheckpoint()
+    connector.orthogonalFirstSegment = next
+    options.markDirty()
+    options.renderCanvas()
+  }
+
+  function setSelectedArrowMagnetic(value: boolean): void {
+    if (options.getActiveTool() === 'arrow' && options.newArrowMagnetic.value !== value) {
+      options.newArrowMagnetic.value = value
+    }
+    if (options.getActiveTool() === 'relation' && options.newRelationMagnetic.value !== value) {
+      options.newRelationMagnetic.value = value
+    }
+
+    const connector = getSelectedConnector()
+    if (!connector) {
+      if ((options.getActiveTool() === 'arrow' || options.getActiveTool() === 'relation')
+        && options.getPointerMode() === 'draw'
+        && options.draftElement.value
+        && isMagneticConnector(options.draftElement.value)) {
+        options.draftElement.value.magnetic = value
+        if (value) {
+          const schema = options.getActiveSchema()
+          updateConnectorAttachments(options.draftElement.value, schema ? schema.elements : [])
+        } else {
+          clearConnectorAttachments(options.draftElement.value)
+        }
+        options.renderCanvas()
+      }
+      return
+    }
+
+    if (getConnectorMagnetic(connector) === value) {
+      return
+    }
+
+    options.pushHistoryCheckpoint()
+    connector.magnetic = value
+    const schema = options.getActiveSchema()
+    if (value) {
+      updateConnectorAttachments(connector, schema ? schema.elements : [])
+    } else {
+      clearConnectorAttachments(connector)
+    }
     options.markDirty()
     options.renderCanvas()
   }
@@ -463,6 +612,44 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
       rect.w = size
       rect.h = size
     }
+    options.markDirty()
+    options.renderCanvas()
+  }
+
+  function setSelectedFilled(value: boolean): void {
+    if ((options.getActiveTool() === 'rect' || options.getActiveTool() === 'ellipse') && options.newShapeFilled.value !== value) {
+      options.newShapeFilled.value = value
+      if (
+        options.getPointerMode() === 'draw'
+        && options.draftElement.value
+        && (options.draftElement.value.type === 'rect' || options.draftElement.value.type === 'ellipse')
+      ) {
+        options.draftElement.value.filled = value
+        options.renderCanvas()
+      }
+    }
+
+    const rect = getSelectedRect()
+    if (rect) {
+      if ((rect.filled !== false) === value) {
+        return
+      }
+      options.pushHistoryCheckpoint()
+      rect.filled = value
+      options.markDirty()
+      options.renderCanvas()
+      return
+    }
+
+    const ellipse = getSelectedEllipse()
+    if (!ellipse) {
+      return
+    }
+    if ((ellipse.filled !== false) === value) {
+      return
+    }
+    options.pushHistoryCheckpoint()
+    ellipse.filled = value
     options.markDirty()
     options.renderCanvas()
   }
@@ -553,13 +740,17 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
     getSelectedLineStyle,
     getSelectedSize,
     getSelectedRect,
+    getSelectedEllipse,
     getSelectedRectAngle,
     getSelectedRectSquare,
+    getSelectedFilled,
     getSelectedConnector,
     getSelectedArrow,
     getSelectedRelation,
     getSelectedArrowBreaks,
     getSelectedArrowOrthogonal,
+    getSelectedArrowFirstSegment,
+    getSelectedArrowMagnetic,
     getSelectedArrowLineOnly,
     getSelectedRelationType,
     getSelectedRelationTypeFromElement,
@@ -567,10 +758,13 @@ export function useBoardSelectionProperties(options: UseBoardSelectionProperties
     getEvenlySpacedArrowBreakPoints,
     shiftSelectedArrowBreaks,
     setSelectedArrowOrthogonal,
+    flipSelectedArrowOrthogonalOrientation,
+    setSelectedArrowMagnetic,
     setSelectedArrowLineOnly,
     setSelectedRelationType,
     setSelectedRectAngle,
     setSelectedRectSquare,
+    setSelectedFilled,
     getApplicablePropertiesForSelection,
     applyColorToSelection,
     applyLineStyle,

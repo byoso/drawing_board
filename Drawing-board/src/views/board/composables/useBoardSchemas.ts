@@ -162,6 +162,22 @@ export function useBoardSchemas(options: UseBoardSchemasOptions) {
       options.showToast('Invalid JSON format or unsupported version.', 'error')
       return
     }
+    const normalizedElements = payload.elements.map((element) => {
+      if ((element.type === 'arrow' || element.type === 'relation') && element.magnetic === undefined) {
+        return {
+          ...element,
+          magnetic: false,
+        }
+      }
+      if ((element.type === 'rect' || element.type === 'ellipse') && element.filled === undefined) {
+        return {
+          ...element,
+          filled: true,
+        }
+      }
+      return element
+    })
+
     const now = Date.now()
     const schemas = options.getStoreSchemas()
     const schema: SchemaLike = {
@@ -169,7 +185,7 @@ export function useBoardSchemas(options: UseBoardSchemasOptions) {
       name: payload.name || `Imported ${schemas.length + 1}`,
       createdAt: now,
       updatedAt: now,
-      elements: payload.elements,
+      elements: normalizedElements,
     }
     schemas.push(schema)
     options.setActiveSchemaId(schema.id)

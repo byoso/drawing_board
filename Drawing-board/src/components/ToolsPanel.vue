@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RectAngle, RelationType, ToolDef, ToolId, ToolSetId } from '@/board/types'
+import type { OrthogonalFirstSegment, RectAngle, RelationType, ToolDef, ToolId, ToolSetId } from '@/board/types'
 
 defineProps<{
   toolSetOptions: Array<{ id: ToolSetId; label: string }>
@@ -18,6 +18,8 @@ defineProps<{
   selectedIsArrowLike: boolean
   selectedIsRelation: boolean
   selectedIsRect: boolean
+  selectedIsEllipse: boolean
+  selectedFilled: boolean
   selectedColor: string | null
   selectedLineStyle: 'solid' | 'dashed' | null
   selectedSize: 'small' | 'medium' | 'big' | null
@@ -25,6 +27,8 @@ defineProps<{
   selectedRectSquare: boolean
   selectedArrowBreaks: number
   selectedArrowOrthogonal: boolean
+  selectedArrowFirstSegment: OrthogonalFirstSegment
+  selectedArrowMagnetic: boolean
   selectedArrowLineOnly: boolean
   selectedRelationType: RelationType
   canIncrementArrowBreaks: boolean
@@ -50,8 +54,11 @@ const emit = defineEmits<{
   (e: 'apply-size', size: 'small' | 'medium' | 'big'): void
   (e: 'rect-angle-change', value: RectAngle): void
   (e: 'rect-square-change', value: boolean): void
+  (e: 'filled-change', value: boolean): void
   (e: 'arrow-breaks-delta', delta: number): void
   (e: 'arrow-orthogonal-change', value: boolean): void
+  (e: 'arrow-orthogonal-flip'): void
+  (e: 'arrow-magnetic-change', value: boolean): void
   (e: 'arrow-line-only-change', value: boolean): void
   (e: 'relation-type-change', value: RelationType): void
   (e: 'frame-name-change', value: string): void
@@ -244,6 +251,17 @@ function onRelationTypeChange(event: Event): void {
         </label>
       </div>
 
+      <div v-if="selectedIsRect || selectedIsEllipse" class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedFilled"
+            @change="emit('filled-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Filled
+        </label>
+      </div>
+
       <div v-if="selectedIsArrowLike" class="options-row">
         <p class="palette-title">Breaks</p>
         <div class="frame-index-row">
@@ -261,6 +279,23 @@ function onRelationTypeChange(event: Event): void {
             @change="onArrowOrthogonalChange"
           >
           Orthogonal
+        </label>
+      </div>
+
+      <div v-if="selectedIsArrowLike && selectedArrowOrthogonal" class="options-row">
+        <button class="option-chip" @click="emit('arrow-orthogonal-flip')">
+          Flip {{ selectedArrowFirstSegment === 'horizontal' ? 'H -> V' : 'V -> H' }}
+        </button>
+      </div>
+
+      <div v-if="selectedIsArrowLike" class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedArrowMagnetic"
+            @change="emit('arrow-magnetic-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Magnetic
         </label>
       </div>
 
@@ -343,6 +378,23 @@ function onRelationTypeChange(event: Event): void {
         </label>
       </div>
 
+      <div v-if="selectedArrowOrthogonal" class="options-row">
+        <button class="option-chip" @click="emit('arrow-orthogonal-flip')">
+          Flip {{ selectedArrowFirstSegment === 'horizontal' ? 'H -> V' : 'V -> H' }}
+        </button>
+      </div>
+
+      <div class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedArrowMagnetic"
+            @change="emit('arrow-magnetic-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Magnetic
+        </label>
+      </div>
+
       <div v-if="activeTool === 'arrow'" class="options-row">
         <label class="checkbox">
           <input
@@ -418,6 +470,32 @@ function onRelationTypeChange(event: Event): void {
             @change="emit('rect-square-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
           >
           Square
+        </label>
+      </div>
+
+      <div class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedFilled"
+            @change="emit('filled-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Filled
+        </label>
+      </div>
+    </div>
+
+    <div v-if="activeTool === 'ellipse' && !showProperties" class="element-properties" aria-label="Ellipse properties">
+      <p class="palette-title">Ellipse</p>
+
+      <div class="options-row">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            :checked="selectedFilled"
+            @change="emit('filled-change', Boolean(($event.target as HTMLInputElement | null)?.checked))"
+          >
+          Filled
         </label>
       </div>
     </div>

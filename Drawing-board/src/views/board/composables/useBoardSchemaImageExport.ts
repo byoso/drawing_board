@@ -263,8 +263,9 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
         const cx = toSvgNumber(rect.x + rect.w / 2 + translateX)
         const cy = toSvgNumber(rect.y + rect.h / 2 + translateY)
         const dash = options.getDashArrayFromStyle(element.strokeStyle)
+        const fill = element.filled === false ? 'none' : (element.fill || 'none')
         shapes.push(
-          `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${RECT_CORNER_RADIUS}" ry="${RECT_CORNER_RADIUS}" fill="${escapeXml(element.fill || 'none')}" stroke="${escapeXml(element.stroke || '#1f2d54')}" stroke-width="${toSvgNumber(element.strokeWidth || 2)}" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} ${angle === 45 ? `transform="rotate(45 ${cx} ${cy})"` : ''} />`,
+          `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${RECT_CORNER_RADIUS}" ry="${RECT_CORNER_RADIUS}" fill="${escapeXml(fill)}" stroke="${escapeXml(element.stroke || '#1f2d54')}" stroke-width="${toSvgNumber(element.strokeWidth || 2)}" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} ${angle === 45 ? `transform="rotate(45 ${cx} ${cy})"` : ''} />`,
         )
         continue
       }
@@ -276,8 +277,9 @@ export function useBoardSchemaImageExport(options: UseBoardSchemaImageExportOpti
         const w = rect.w
         const h = rect.h
         const dash = options.getDashArrayFromStyle(element.strokeStyle)
+        const fill = element.filled === false ? 'none' : (element.fill || 'none')
         shapes.push(
-          `<ellipse cx="${toSvgNumber(x + w / 2)}" cy="${toSvgNumber(y + h / 2)}" rx="${toSvgNumber(w / 2)}" ry="${toSvgNumber(h / 2)}" fill="${escapeXml(element.fill || 'none')}" stroke="${escapeXml(element.stroke || '#1f2d54')}" stroke-width="${toSvgNumber(element.strokeWidth || 2)}" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
+          `<ellipse cx="${toSvgNumber(x + w / 2)}" cy="${toSvgNumber(y + h / 2)}" rx="${toSvgNumber(w / 2)}" ry="${toSvgNumber(h / 2)}" fill="${escapeXml(fill)}" stroke="${escapeXml(element.stroke || '#1f2d54')}" stroke-width="${toSvgNumber(element.strokeWidth || 2)}" ${dash.length ? `stroke-dasharray="${dash.join(',')}"` : ''} />`,
         )
         continue
       }

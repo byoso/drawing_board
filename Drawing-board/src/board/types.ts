@@ -2,6 +2,7 @@ export type ToolId = 'select' | 'rect' | 'ellipse' | 'arrow' | 'frame' | 'text' 
 export type ToolSetId = 'tools' | 'database'
 export type RelationType = 'one-to-one' | 'many-to-one' | 'one-to-many' | 'many-to-many'
 export type RectAngle = 0 | 45
+export type OrthogonalFirstSegment = 'horizontal' | 'vertical'
 
 export interface ToolDef {
   id: ToolId
@@ -20,8 +21,12 @@ export interface BoardElement {
   y1?: number
   x2?: number
   y2?: number
+  magnetic?: boolean
+  startAttachedToId?: string
+  endAttachedToId?: string
   breaks?: number
   orthogonal?: boolean
+  orthogonalFirstSegment?: OrthogonalFirstSegment
   lineOnly?: boolean
   relationType?: RelationType
   tableTitle?: string
@@ -31,6 +36,7 @@ export interface BoardElement {
   square?: boolean
   stroke?: string
   fill?: string
+  filled?: boolean
   strokeWidth?: number
   strokeStyle?: string
   fontSize?: number
